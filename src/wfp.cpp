@@ -321,7 +321,7 @@ bool _wfp_initialize (bool is_full)
 						FWPM_NET_EVENT_KEYWORD_INBOUND_MCAST |
 						FWPM_NET_EVENT_KEYWORD_INBOUND_BCAST;
 
-					// win10 19h1+
+					// 1903+
 					if (_r_sys_validversion (10, 0, 18362))
 						val.uint32 |= FWPM_NET_EVENT_KEYWORD_PORT_SCANNING_DROP;
 
@@ -841,24 +841,31 @@ bool _wfp_createrulefilter (HANDLE hengine, LPCWSTR name, size_t app_hash, LPCWS
 		PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
 
 		if (!ptr_app_object)
+		{
+			_app_logerror (TEXT (__FUNCTION__), 0, _r_fmt (L"App \"%" PR_SIZE_T L"\" not found!", app_hash), true);
 			return false;
+		}
 
 		PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
 
 		if (!ptr_app)
 		{
+			_app_logerror (TEXT (__FUNCTION__), 0, _r_fmt (L"App \"%" PR_SIZE_T L"\" not found!", app_hash), true);
 			_r_obj_dereference (ptr_app_object);
+
 			return false;
 		}
 
 		if (ptr_app->type == DataAppUWP) // windows store app (win8+)
 		{
-			if (ptr_app->pdata)
+			PBYTE pdata = nullptr;
+
+			if (_app_item_get (ptr_app->type, app_hash, nullptr, nullptr, nullptr, &pdata))
 			{
 				fwfc[count].fieldKey = FWPM_CONDITION_ALE_PACKAGE_ID;
 				fwfc[count].matchType = FWP_MATCH_EQUAL;
 				fwfc[count].conditionValue.type = FWP_SID;
-				fwfc[count].conditionValue.sid = (SID*)ptr_app->pdata;
+				fwfc[count].conditionValue.sid = (SID*)pdata;
 
 				count += 1;
 			}
@@ -872,7 +879,9 @@ bool _wfp_createrulefilter (HANDLE hengine, LPCWSTR name, size_t app_hash, LPCWS
 		}
 		else if (ptr_app->type == DataAppService) // windows service
 		{
-			if (ptr_app->pdata && ByteBlobAlloc (ptr_app->pdata, GetSecurityDescriptorLength (ptr_app->pdata), &bSid))
+			PBYTE pdata = nullptr;
+
+			if (_app_item_get (ptr_app->type, app_hash, nullptr, nullptr, nullptr, &pdata) && ByteBlobAlloc (pdata, GetSecurityDescriptorLength (pdata), &bSid))
 			{
 				fwfc[count].fieldKey = FWPM_CONDITION_ALE_USER_ID;
 				fwfc[count].matchType = FWP_MATCH_EQUAL;

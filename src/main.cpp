@@ -3,43 +3,6 @@
 
 #include "global.hpp"
 
-rapp app (APP_NAME, APP_NAME_SHORT, APP_VERSION, APP_COPYRIGHT);
-
-STATIC_DATA config;
-
-FWPM_SESSION session;
-
-OBJECTS_MAP apps;
-OBJECTS_MAP apps_helper;
-OBJECTS_VEC rules_arr;
-OBJECTS_MAP rules_config;
-OBJECTS_MAP network_map;
-
-OBJECTS_MAP cache_arpa;
-OBJECTS_MAP cache_signatures;
-OBJECTS_MAP cache_versions;
-OBJECTS_MAP cache_dns;
-OBJECTS_MAP cache_hosts;
-TYPES_MAP cache_types;
-
-THREADS_VEC threads_pool;
-
-OBJECTS_VEC colors;
-std::vector<time_t> timers;
-
-GUIDS_VEC filter_ids;
-
-ITEM_LIST_HEAD log_stack;
-
-_R_FASTLOCK lock_access;
-_R_FASTLOCK lock_apply;
-_R_FASTLOCK lock_cache;
-_R_FASTLOCK lock_checkbox;
-_R_FASTLOCK lock_logbusy;
-_R_FASTLOCK lock_logthread;
-_R_FASTLOCK lock_transaction;
-_R_FASTLOCK lock_writelog;
-
 EXTERN_C const IID IID_IImageList2;
 
 const UINT WM_FINDMSGSTRING = RegisterWindowMessage (FINDMSGSTRING);
@@ -1929,8 +1892,6 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					SetDlgItemText (hwnd, IDC_CONFIRMEXIT_CHK, app.LocaleString (IDS_CONFIRMEXIT_CHK, nullptr));
 					SetDlgItemText (hwnd, IDC_CONFIRMEXITTIMER_CHK, app.LocaleString (IDS_CONFIRMEXITTIMER_CHK, nullptr));
 					SetDlgItemText (hwnd, IDC_CONFIRMLOGCLEAR_CHK, app.LocaleString (IDS_CONFIRMLOGCLEAR_CHK, nullptr));
-
-					SetDlgItemText (hwnd, IDC_COLORS_HINT, app.LocaleString (IDS_COLORS_HINT, nullptr));
 
 					_app_listviewsetfont (hwnd, IDC_COLORS, false);
 
@@ -4318,7 +4279,7 @@ INT_PTR CALLBACK DlgProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 				case IDM_SETTINGS:
 				case IDM_TRAY_SETTINGS:
 				{
-					app.CreateSettingsWindow (&SettingsProc);
+					app.CreateSettingsWindow (hwnd, &SettingsProc);
 					break;
 				}
 
@@ -5754,7 +5715,7 @@ INT_PTR CALLBACK DlgProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 					break;
 				}
 
-#if defined(_DEBUG) || defined (_APP_BETA)
+#if defined(_DEBUG)
 
 #define FN_AD L"<test filter>"
 #define RM_AD L"195.210.46.95"
@@ -5868,7 +5829,7 @@ INT_PTR CALLBACK DlgProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 					RDBG (L"%d", std::clamp (10, 19, 15)); // seh
 					break;
 				}
-#endif // _DEBUG || _APP_BETA
+#endif // _DEBUG
 			}
 
 			break;
@@ -5882,80 +5843,85 @@ INT APIENTRY wWinMain (HINSTANCE, HINSTANCE, LPWSTR, INT)
 {
 	MSG msg = {0};
 
-	// parse arguments
+	if (app.Initialize (APP_NAME, APP_NAME_SHORT, APP_VERSION, APP_COPYRIGHT))
 	{
-		INT numargs = 0;
-		LPWSTR* arga = CommandLineToArgvW (GetCommandLine (), &numargs);
-
-		if (arga)
+		// parse arguments
 		{
-			bool is_install = false;
-			bool is_uninstall = false;
-			bool is_silent = false;
+			INT numargs = 0;
+			LPWSTR* arga = CommandLineToArgvW (GetCommandLine (), &numargs);
 
-			for (INT i = 0; i < numargs; i++)
+			if (arga)
 			{
-				if (_r_str_compare (arga[i], L"/install", 8) == 0)
-					is_install = true;
+				bool is_install = false;
+				bool is_uninstall = false;
+				bool is_silent = false;
 
-				else if (_r_str_compare (arga[i], L"/uninstall", 10) == 0)
-					is_uninstall = true;
-
-				else if (_r_str_compare (arga[i], L"/silent", 7) == 0)
-					is_silent = true;
-			}
-
-			SAFE_LOCAL_FREE (arga);
-
-			if (is_install || is_uninstall)
-			{
-				const bool is_elevated = _r_sys_iselevated ();
-
-				if (is_install)
+				for (INT i = 0; i < numargs; i++)
 				{
-					if (is_elevated && (is_silent || (!_wfp_isfiltersinstalled () && _app_installmessage (nullptr, true))))
-					{
-						_app_initialize ();
-						_app_profile_load (nullptr);
+					if (_r_str_compare (arga[i], L"/install", 8) == 0)
+						is_install = true;
 
-						if (_wfp_initialize (true))
-							_wfp_installfilters ();
+					else if (_r_str_compare (arga[i], L"/uninstall", 10) == 0)
+						is_uninstall = true;
 
-						_wfp_uninitialize (false);
-					}
-				}
-				else if (is_uninstall)
-				{
-					if (is_elevated && _wfp_isfiltersinstalled () && _app_installmessage (nullptr, false))
-					{
-						if (_wfp_initialize (false))
-							_wfp_destroyfilters (_wfp_getenginehandle ());
-
-						_wfp_uninitialize (true);
-					}
+					else if (_r_str_compare (arga[i], L"/silent", 7) == 0)
+						is_silent = true;
 				}
 
-				return ERROR_SUCCESS;
+				SAFE_LOCAL_FREE (arga);
+
+				if (is_install || is_uninstall)
+				{
+					const bool is_elevated = _r_sys_iselevated ();
+
+					if (is_install)
+					{
+						if (is_elevated && (is_silent || (!_wfp_isfiltersinstalled () && _app_installmessage (nullptr, true))))
+						{
+							_app_initialize ();
+							_app_profile_load (nullptr);
+
+							if (_wfp_initialize (true))
+								_wfp_installfilters ();
+
+							_wfp_uninitialize (false);
+						}
+					}
+					else if (is_uninstall)
+					{
+						if (is_elevated && _wfp_isfiltersinstalled () && _app_installmessage (nullptr, false))
+						{
+							if (_wfp_initialize (false))
+								_wfp_destroyfilters (_wfp_getenginehandle ());
+
+							_wfp_uninitialize (true);
+						}
+					}
+
+					return ERROR_SUCCESS;
+				}
 			}
 		}
-	}
 
-	if (app.CreateMainWindow (IDD_MAIN, IDI_MAIN, &DlgProc))
-	{
-		const HACCEL haccel = LoadAccelerators (app.GetHINSTANCE (), MAKEINTRESOURCE (IDA_MAIN));
-
-		if (haccel)
+		if (app.CreateMainWindow (IDD_MAIN, IDI_MAIN, &DlgProc))
 		{
-			while (GetMessage (&msg, nullptr, 0, 0) > 0)
-			{
-				if (!TranslateAccelerator (app.GetHWND (), haccel, &msg) && !IsDialogMessage (app.GetHWND (), &msg))
-				{
-					TranslateMessage (&msg);
-					DispatchMessage (&msg);
-				}
-			}
+			const HACCEL haccel = LoadAccelerators (app.GetHINSTANCE (), MAKEINTRESOURCE (IDA_MAIN));
 
-			DestroyAcceleratorTable (haccel);
+			if (haccel)
+			{
+				while (GetMessage (&msg, nullptr, 0, 0) > 0)
+				{
+					HWND hwnd = GetActiveWindow ();
+
+					if (!TranslateAccelerator (hwnd, haccel, &msg) && !IsDialogMessage (hwnd, &msg))
+					{
+						TranslateMessage (&msg);
+						DispatchMessage (&msg);
+					}
+				}
+
+				DestroyAcceleratorTable (haccel);
+			}
 		}
 	}
 
