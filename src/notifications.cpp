@@ -1,5 +1,5 @@
 // simplewall
-// Copyright (c) 2016-2019 Henry++
+// Copyright (c) 2016-2020 Henry++
 
 #include "global.hpp"
 
@@ -391,7 +391,7 @@ void _app_notifysetpos (HWND hwnd, bool is_forced)
 		GetWindowRect (hwnd, &windowRect);
 
 		_r_wnd_adjustwindowrect (hwnd, &windowRect);
-		_r_wnd_resize (nullptr, hwnd, nullptr, windowRect.left, windowRect.top, 0, 0, 0);
+		_r_wnd_resize (nullptr, hwnd, nullptr, windowRect.left, windowRect.top, 0, 0, SWP_NOZORDER | SWP_NOOWNERZORDER);
 
 		return;
 	}
@@ -435,7 +435,7 @@ void _app_notifysetpos (HWND hwnd, bool is_forced)
 				windowRect.top = (desktopRect.bottom - _R_RECT_HEIGHT (&windowRect)) - border_x;
 			}
 
-			_r_wnd_resize (nullptr, hwnd, nullptr, windowRect.left, windowRect.top, 0, 0, 0);
+			_r_wnd_resize (nullptr, hwnd, nullptr, windowRect.left, windowRect.top, 0, 0, SWP_NOZORDER | SWP_NOOWNERZORDER);
 			return;
 		}
 	}
@@ -564,6 +564,14 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			break;
 		}
 
+		case WM_DPICHANGED:
+		{
+			_app_notifyfontset (hwnd);
+			_app_notifyrefresh (hwnd, false);
+
+			break;
+		}
+
 		case WM_CLOSE:
 		{
 			_app_notifyhide (hwnd);
@@ -613,7 +621,7 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 		case WM_SETTINGCHANGE:
 		{
 			if (_r_wnd_isdarkmessage (reinterpret_cast<LPCWSTR>(lparam)))
-				SendMessage (hwnd, WM_THEMECHANGED, 0, 0);
+				PostMessage (hwnd, WM_THEMECHANGED, 0, 0);
 
 			break;
 		}
@@ -634,7 +642,7 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 			_r_dc_fillrect (hdc, &rc_client, GetSysColor (COLOR_3DFACE));
 
 			for (INT i = 0; i < wnd_width; i++)
-				SetPixel (hdc, i, rc_client.top, GetSysColor (COLOR_APPWORKSPACE));
+				SetPixelV (hdc, i, rc_client.top, GetSysColor (COLOR_APPWORKSPACE));
 
 			EndPaint (hwnd, &ps);
 
