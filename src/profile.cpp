@@ -210,9 +210,9 @@ PR_OBJECT _app_getrulebyhash (size_t rule_hash)
 	if (!rule_hash)
 		return nullptr;
 
-	for (size_t i = 0; i < rules_arr.size (); i++)
+	for (auto& p : rules_arr)
 	{
-		PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
 			continue;
@@ -223,7 +223,7 @@ PR_OBJECT _app_getrulebyhash (size_t rule_hash)
 		{
 			if (ptr_rule->is_readonly)
 			{
-				if (ptr_rule->pname && _r_str_hash (ptr_rule->pname) == rule_hash)
+				if (_r_str_hash (ptr_rule->pname) == rule_hash)
 					return ptr_rule_object;
 			}
 		}
@@ -341,9 +341,9 @@ void _app_getcount (PITEM_STATUS ptr_status)
 		_r_obj_dereference (ptr_app_object);
 	}
 
-	for (size_t i = 0; i < rules_arr.size (); i++)
+	for (auto& p : rules_arr)
 	{
-		PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
 			continue;
@@ -594,7 +594,7 @@ void _app_setruleiteminfo (HWND hwnd, INT listview_id, INT item, PITEM_RULE ptr_
 
 	_r_listview_setitem (hwnd, listview_id, item, 0, ptr_rule->type == DataRuleCustom && ptr_rule->is_readonly ? _r_fmt (L"%s" SZ_READONLY_RULE, ptr_rule->pname) : ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule));
 	_r_listview_setitem (hwnd, listview_id, item, 1, ptr_rule->protocol ? _app_getprotoname (ptr_rule->protocol, AF_UNSPEC) : app.LocaleString (IDS_ANY, nullptr));
-	_r_listview_setitem (hwnd, listview_id, item, 2, app.LocaleString (ptr_rule->dir == FWP_DIRECTION_MAX ? IDS_ANY : IDS_DIRECTION_1 + ptr_rule->dir, nullptr));
+	_r_listview_setitem (hwnd, listview_id, item, 2, app.LocaleString (ptr_rule->direction == FWP_DIRECTION_MAX ? IDS_ANY : IDS_DIRECTION_1 + ptr_rule->direction, nullptr));
 
 	_r_listview_setitemcheck (hwnd, listview_id, item, ptr_rule->is_enabled);
 
@@ -952,9 +952,9 @@ bool _app_isapphaverule (size_t app_hash)
 	if (!app_hash)
 		return false;
 
-	for (size_t i = 0; i < rules_arr.size (); i++)
+	for (auto& p : rules_arr)
 	{
-		PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
 			continue;
@@ -1128,7 +1128,7 @@ void _app_profile_load_fallback ()
 	_app_setappinfo (config.svchost_hash, InfoUndeletable, TRUE);
 }
 
-void _app_profile_load_helper (const pugi::xml_node & root, EnumDataType type, UINT version)
+void _app_profile_load_helper (const pugi::xml_node& root, EnumDataType type, UINT version)
 {
 	const INT blocklist_spy_state = std::clamp (app.ConfigGet (L"BlocklistSpyState", 2).AsInt (), 0, 2);
 	const INT blocklist_update_state = std::clamp (app.ConfigGet (L"BlocklistUpdateState", 0).AsInt (), 0, 2);
@@ -1166,7 +1166,7 @@ void _app_profile_load_helper (const pugi::xml_node & root, EnumDataType type, U
 				_r_str_alloc (&ptr_rule->prule_local, rule_local_length, attr_rule_local);
 			}
 
-			ptr_rule->dir = (FWP_DIRECTION)item.attribute (L"dir").as_int ();
+			ptr_rule->direction = (FWP_DIRECTION)item.attribute (L"dir").as_int ();
 			ptr_rule->protocol = (UINT8)item.attribute (L"protocol").as_int ();
 			ptr_rule->af = (ADDRESS_FAMILY)item.attribute (L"version").as_int ();
 
@@ -1235,13 +1235,11 @@ void _app_profile_load_helper (const pugi::xml_node & root, EnumDataType type, U
 					rstringvec rvc;
 					_r_str_split (apps_rule, apps_rule.GetLength (), DIVIDER_APP[0], rvc);
 
-					for (size_t i = 0; i < rvc.size (); i++)
+					for (auto& p : rvc)
 					{
-						rstring& rlink = rvc.at (i);
+						_r_str_trim (p, DIVIDER_TRIM);
 
-						_r_str_trim (rlink, DIVIDER_TRIM);
-
-						const rstring app_path = _r_path_expand (rlink);
+						const rstring app_path = _r_path_expand (p);
 						size_t app_hash = _r_str_hash (app_path);
 
 						if (app_hash)
@@ -1342,7 +1340,7 @@ void _app_profile_load_internal (LPCWSTR path, LPCWSTR path_backup, time_t* ptim
 
 	// show only syntax, memory and i/o errors...
 	if (!load_original && load_original.status != pugi::status_file_not_found && load_original.status != pugi::status_no_document_element)
-		_app_logerror (L"pugi::load_file", 0, _r_fmt (L"status: %d,offset: %" PR_PTRDIFF L",text: %hs,file: %s", load_original.status, load_original.offset, load_original.description (), path), false);
+		app.LogError (L"pugi::load_file", 0, _r_fmt (L"status: %d,offset: %" PR_PTRDIFF L",text: %hs,file: %s", load_original.status, load_original.offset, load_original.description (), path), UID);
 
 	if (load_original && root)
 	{
@@ -1403,10 +1401,10 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 	_r_fastlock_releaseshared (&lock_access);
 
 	// load profile
-	if (path_custom || _r_fs_exists (config.profile_path) || _r_fs_exists (config.profile_path_backup))
+	if (!_r_str_isempty (path_custom) || _r_fs_exists (config.profile_path) || _r_fs_exists (config.profile_path_backup))
 	{
 		pugi::xml_document doc;
-		pugi::xml_parse_result result = doc.load_file (path_custom ? path_custom : config.profile_path, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
+		pugi::xml_parse_result result = doc.load_file (!_r_str_isempty (path_custom) ? path_custom : config.profile_path, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
 
 		// load backup
 		if (!result)
@@ -1416,7 +1414,7 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 		{
 			// show only syntax, memory and i/o errors...
 			if (result.status != pugi::status_file_not_found && result.status != pugi::status_no_document_element)
-				_app_logerror (L"pugi::load_file", 0, _r_fmt (L"status: %d,offset: %" PR_PTRDIFF L",text: %hs,file: %s", result.status, result.offset, result.description (), path_custom ? path_custom : config.profile_path), false);
+				app.LogError (L"pugi::load_file", 0, _r_fmt (L"status: %d,offset: %" PR_PTRDIFF L",text: %hs,file: %s", result.status, result.offset, result.description (), !_r_str_isempty (path_custom) ? path_custom : config.profile_path), UID);
 
 			_r_fastlock_acquireshared (&lock_access);
 			_app_profile_load_fallback ();
@@ -1654,7 +1652,7 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 void _app_profile_save (LPCWSTR path_custom)
 {
 	const time_t current_time = _r_unixtime_now ();
-	const bool is_backuprequired = !path_custom && (app.ConfigGet (L"IsBackupProfile", true).AsBool () && (((current_time - app.ConfigGet (L"BackupTimestamp", time_t (0)).AsLonglong ()) >= app.ConfigGet (L"BackupPeriod", time_t (_R_SECONDSCLOCK_HOUR (BACKUP_HOURS_PERIOD))).AsLonglong ()) || !_r_fs_exists (config.profile_path_backup)));
+	const bool is_backuprequired = _r_str_isempty (path_custom) && app.ConfigGet (L"IsBackupProfile", true).AsBool () && (!_r_fs_exists (config.profile_path_backup) || ((current_time - app.ConfigGet (L"BackupTimestamp", time_t (0)).AsLonglong ()) >= app.ConfigGet (L"BackupPeriod", time_t (_R_SECONDSCLOCK_HOUR (BACKUP_HOURS_PERIOD))).AsLonglong ()));
 
 	pugi::xml_document doc;
 	pugi::xml_node root = doc.append_child (L"root");
@@ -1735,9 +1733,9 @@ void _app_profile_save (LPCWSTR path_custom)
 		{
 			_r_fastlock_acquireshared (&lock_access);
 
-			for (size_t i = 0; i < rules_arr.size (); i++)
+			for (auto& p : rules_arr)
 			{
-				PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+				PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 				if (!ptr_rule_object)
 					continue;
@@ -1766,8 +1764,8 @@ void _app_profile_save (LPCWSTR path_custom)
 					if (ptr_rule->profile)
 						item.append_attribute (L"profile").set_value (ptr_rule->profile);
 
-					if (ptr_rule->dir != FWP_DIRECTION_OUTBOUND)
-						item.append_attribute (L"dir").set_value (ptr_rule->dir);
+					if (ptr_rule->direction != FWP_DIRECTION_OUTBOUND)
+						item.append_attribute (L"dir").set_value (ptr_rule->direction);
 
 					if (ptr_rule->protocol != 0)
 						item.append_attribute (L"protocol").set_value (ptr_rule->protocol);
@@ -1868,7 +1866,7 @@ void _app_profile_save (LPCWSTR path_custom)
 			_r_fastlock_releaseshared (&lock_access);
 		}
 
-		doc.save_file (path_custom ? path_custom : config.profile_path, L"\t", PUGIXML_SAVE_FLAGS, PUGIXML_SAVE_ENCODING);
+		doc.save_file (_r_str_isempty (path_custom) ? config.profile_path : path_custom, L"\t", PUGIXML_SAVE_FLAGS, PUGIXML_SAVE_ENCODING);
 
 		// make backup
 		if (is_backuprequired)

@@ -3,19 +3,6 @@
 
 #include "global.hpp"
 
-void _app_logerror (LPCWSTR fn, DWORD errcode, LPCWSTR desc, bool is_nopopups)
-{
-	const time_t current_time = _r_unixtime_now ();
-
-	_r_dbg (fn, errcode, desc);
-
-	if ((current_time - app.ConfigGet (L"ErrorNotificationsTimestamp", 0LL).AsLonglong ()) >= app.ConfigGet (L"ErrorNotificationsPeriod", 4LL).AsLonglong () && !is_nopopups && app.ConfigGet (L"IsErrorNotificationsEnabled", true).AsBool ()) // check for timeout (sec.)
-	{
-		_r_tray_popup (app.GetHWND (), UID, NIIF_ERROR | (app.ConfigGet (L"IsNotificationsSound", true).AsBool () ? 0 : NIIF_NOSOUND), APP_NAME, app.LocaleString (IDS_STATUS_ERROR, nullptr));
-		app.ConfigSet (L"ErrorNotificationsTimestamp", current_time);
-	}
-}
-
 rstring _app_getlogviewer ()
 {
 	rstring result = app.ConfigGet (L"LogViewer", LOG_VIEWER_DEFAULT);
@@ -26,41 +13,31 @@ rstring _app_getlogviewer ()
 	return _r_path_expand (result);
 }
 
-bool _app_loginit (bool is_install)
+void _app_loginit (bool is_install)
 {
 	// dropped packets logging (win7+)
 	if (!config.hnetevent)
-		return false;
+		return;
 
 	// reset all handles
 	_r_fastlock_acquireexclusive (&lock_writelog);
 
-	if (config.hlogfile != nullptr && config.hlogfile != INVALID_HANDLE_VALUE)
-	{
-		CloseHandle (config.hlogfile);
-		config.hlogfile = nullptr;
-	}
+	SAFE_DELETE_HANDLE (config.hlogfile);
 
 	_r_fastlock_releaseexclusive (&lock_writelog);
 
-	if (!is_install)
-		return true; // already closed
-
-	// check if log enabled
-	if (!app.ConfigGet (L"IsLogEnabled", false).AsBool ())
-		return false;
-
-	bool result = false;
+	if (!is_install || !app.ConfigGet (L"IsLogEnabled", false).AsBool ())
+		return; // already closed or not enabled
 
 	const rstring path = _r_path_expand (app.ConfigGet (L"LogPath", LOG_PATH_DEFAULT));
 
 	_r_fastlock_acquireexclusive (&lock_writelog);
 
-	config.hlogfile = CreateFile (path, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	config.hlogfile = CreateFile (path, GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 
-	if (config.hlogfile == INVALID_HANDLE_VALUE)
+	if (!_r_fs_isvalidhandle (config.hlogfile))
 	{
-		_app_logerror (L"CreateFile", GetLastError (), path, true);
+		app.LogError (L"CreateFile", GetLastError (), path, 0);
 	}
 	else
 	{
@@ -75,22 +52,19 @@ bool _app_loginit (bool is_install)
 		}
 		else
 		{
-			_app_logchecklimit ();
+			if (_app_logchecklimit ())
+				_app_logclear ();
 
 			_r_fs_setpos (config.hlogfile, 0, FILE_END);
 		}
-
-		result = true;
 	}
 
 	_r_fastlock_releaseexclusive (&lock_writelog);
-
-	return result;
 }
 
 void _app_logwrite (PITEM_LOG ptr_log)
 {
-	if (!ptr_log || !config.hlogfile || config.hlogfile == INVALID_HANDLE_VALUE)
+	if (!ptr_log || !_r_fs_isvalidhandle (config.hlogfile))
 		return;
 
 	// parse path
@@ -174,7 +148,8 @@ void _app_logwrite (PITEM_LOG ptr_log)
 
 	_r_fastlock_acquireexclusive (&lock_writelog);
 
-	_app_logchecklimit ();
+	if (_app_logchecklimit ())
+		_app_logclear ();
 
 	DWORD written = 0;
 	WriteFile (config.hlogfile, buffer.GetString (), DWORD (buffer.GetLength () * sizeof (WCHAR)), &written, nullptr);
@@ -186,24 +161,17 @@ bool _app_logchecklimit ()
 {
 	const DWORD limit = app.ConfigGet (L"LogSizeLimitKb", LOG_SIZE_LIMIT_DEFAULT).AsUlong ();
 
-	if (!limit || !config.hlogfile || config.hlogfile == INVALID_HANDLE_VALUE)
+	if (!limit || !_r_fs_isvalidhandle (config.hlogfile))
 		return false;
 
-	if (_r_fs_size (config.hlogfile) >= (limit * _R_BYTESIZE_KB))
-	{
-		_app_logclear ();
-
-		return true;
-	}
-
-	return false;
+	return (_r_fs_size (config.hlogfile) >= (limit * _R_BYTESIZE_KB));
 }
 
 void _app_logclear ()
 {
 	const rstring path = _r_path_expand (app.ConfigGet (L"LogPath", LOG_PATH_DEFAULT));
 
-	if (config.hlogfile != nullptr && config.hlogfile != INVALID_HANDLE_VALUE)
+	if (_r_fs_isvalidhandle (config.hlogfile))
 	{
 		_r_fs_setpos (config.hlogfile, 2, FILE_BEGIN);
 
@@ -216,126 +184,98 @@ void _app_logclear ()
 	}
 	else
 	{
-		_r_fs_delete (path, false);
+		_r_fs_remove (path, RFS_FORCEREMOVE);
+		_r_fs_remove (_r_fmt (L"%s.bak", path.GetString ()), RFS_FORCEREMOVE);
 	}
-
-	_r_fs_delete (_r_fmt (L"%s.bak", path.GetString ()), false);
 }
 
-bool _wfp_logsubscribe (HANDLE hengine)
+void _wfp_logsubscribe (HANDLE hengine)
 {
 	if (!hengine)
-		return false;
-
-	bool result = false;
+		return;
 
 	if (config.hnetevent)
+		return; // already subscribed
+
+	HMODULE hlib = LoadLibraryEx (L"fwpuclnt.dll", nullptr, LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_SYSTEM32);
+
+	if (hlib)
 	{
-		result = true;
-	}
-	else
-	{
-		const HMODULE hlib = LoadLibrary (L"fwpuclnt.dll");
+		using FWPMNES4 = decltype (&FwpmNetEventSubscribe4); // win10rs5+
+		using FWPMNES3 = decltype (&FwpmNetEventSubscribe3); // win10rs4+
+		using FWPMNES2 = decltype (&FwpmNetEventSubscribe2); // win10rs1+
+		using FWPMNES1 = decltype (&FwpmNetEventSubscribe1); // win8+
+		using FWPMNES0 = decltype (&FwpmNetEventSubscribe0); // win7+
 
-		if (!hlib)
+		const FWPMNES4 _FwpmNetEventSubscribe4 = (FWPMNES4)GetProcAddress (hlib, "FwpmNetEventSubscribe4");
+		const FWPMNES3 _FwpmNetEventSubscribe3 = (FWPMNES3)GetProcAddress (hlib, "FwpmNetEventSubscribe3");
+		const FWPMNES2 _FwpmNetEventSubscribe2 = (FWPMNES2)GetProcAddress (hlib, "FwpmNetEventSubscribe2");
+		const FWPMNES1 _FwpmNetEventSubscribe1 = (FWPMNES1)GetProcAddress (hlib, "FwpmNetEventSubscribe1");
+		const FWPMNES0 _FwpmNetEventSubscribe0 = (FWPMNES0)GetProcAddress (hlib, "FwpmNetEventSubscribe0");
+
+		if (_FwpmNetEventSubscribe4 || _FwpmNetEventSubscribe3 || _FwpmNetEventSubscribe2 || _FwpmNetEventSubscribe1 || _FwpmNetEventSubscribe0)
 		{
-			_app_logerror (L"LoadLibrary", GetLastError (), L"fwpuclnt.dll", true);
-		}
-		else
-		{
-			typedef DWORD (WINAPI * FWPMNES5) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK4, LPVOID, LPHANDLE); // win10new+
-			typedef DWORD (WINAPI * FWPMNES4) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK4, LPVOID, LPHANDLE); // win10rs5+
-			typedef DWORD (WINAPI * FWPMNES3) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK3, LPVOID, LPHANDLE); // win10rs4+
-			typedef DWORD (WINAPI * FWPMNES2) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK2, LPVOID, LPHANDLE); // win10+
-			typedef DWORD (WINAPI * FWPMNES1) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK1, LPVOID, LPHANDLE); // win8+
-			typedef DWORD (WINAPI * FWPMNES0) (HANDLE, const FWPM_NET_EVENT_SUBSCRIPTION0 *, FWPM_NET_EVENT_CALLBACK0, LPVOID, LPHANDLE); // win7+
+			FWPM_NET_EVENT_SUBSCRIPTION subscription;
+			FWPM_NET_EVENT_ENUM_TEMPLATE enum_template;
 
-			const FWPMNES5 _FwpmNetEventSubscribe5 = (FWPMNES5)GetProcAddress (hlib, "FwpmNetEventSubscribe5"); // win10new+
-			const FWPMNES4 _FwpmNetEventSubscribe4 = (FWPMNES4)GetProcAddress (hlib, "FwpmNetEventSubscribe4"); // win10rs5+
-			const FWPMNES3 _FwpmNetEventSubscribe3 = (FWPMNES3)GetProcAddress (hlib, "FwpmNetEventSubscribe3"); // win10rs4+
-			const FWPMNES2 _FwpmNetEventSubscribe2 = (FWPMNES2)GetProcAddress (hlib, "FwpmNetEventSubscribe2"); // win10+
-			const FWPMNES1 _FwpmNetEventSubscribe1 = (FWPMNES1)GetProcAddress (hlib, "FwpmNetEventSubscribe1"); // win8+
-			const FWPMNES0 _FwpmNetEventSubscribe0 = (FWPMNES0)GetProcAddress (hlib, "FwpmNetEventSubscribe0"); // win7+
+			RtlSecureZeroMemory (&subscription, sizeof (subscription));
+			RtlSecureZeroMemory (&enum_template, sizeof (enum_template));
 
-			if (!_FwpmNetEventSubscribe5 && !_FwpmNetEventSubscribe4 && !_FwpmNetEventSubscribe3 && !_FwpmNetEventSubscribe2 && !_FwpmNetEventSubscribe1 && !_FwpmNetEventSubscribe0)
+			if (config.psession)
+				RtlCopyMemory (&subscription.sessionKey, config.psession, sizeof (GUID));
+
+			enum_template.numFilterConditions = 0; // get events for all conditions
+
+			subscription.enumTemplate = &enum_template;
+
+			DWORD rc;
+
+			if (_FwpmNetEventSubscribe4)
+				rc = _FwpmNetEventSubscribe4 (hengine, &subscription, &_wfp_logcallback4, nullptr, &config.hnetevent); // win10rs5+
+
+			else if (_FwpmNetEventSubscribe3)
+				rc = _FwpmNetEventSubscribe3 (hengine, &subscription, &_wfp_logcallback3, nullptr, &config.hnetevent); // win10rs4+
+
+			else if (_FwpmNetEventSubscribe2)
+				rc = _FwpmNetEventSubscribe2 (hengine, &subscription, &_wfp_logcallback2, nullptr, &config.hnetevent); // win10rs1+
+
+			else if (_FwpmNetEventSubscribe1)
+				rc = _FwpmNetEventSubscribe1 (hengine, &subscription, &_wfp_logcallback1, nullptr, &config.hnetevent); // win8+
+
+			else if (_FwpmNetEventSubscribe0)
+				rc = _FwpmNetEventSubscribe0 (hengine, &subscription, &_wfp_logcallback0, nullptr, &config.hnetevent); // win7+
+
+			else
+				rc = ERROR_INVALID_FUNCTION;
+
+			if (rc != ERROR_SUCCESS)
 			{
-				_app_logerror (L"GetProcAddress", GetLastError (), L"FwpmNetEventSubscribe", true);
+				app.LogError (L"FwpmNetEventSubscribe", rc, nullptr, 0);
 			}
 			else
 			{
-				FWPM_NET_EVENT_SUBSCRIPTION subscription;
-				FWPM_NET_EVENT_ENUM_TEMPLATE enum_template;
-
-				RtlSecureZeroMemory (&subscription, sizeof (subscription));
-				RtlSecureZeroMemory (&enum_template, sizeof (enum_template));
-
-				if (config.psession)
-					RtlCopyMemory (&subscription.sessionKey, config.psession, sizeof (GUID));
-
-				enum_template.numFilterConditions = 0; // get events for all conditions
-
-				subscription.enumTemplate = &enum_template;
-
-				DWORD rc;
-
-				if (_FwpmNetEventSubscribe5)
-					rc = _FwpmNetEventSubscribe5 (hengine, &subscription, &_wfp_logcallback4, nullptr, &config.hnetevent); // win10new+
-
-				else if (_FwpmNetEventSubscribe4)
-					rc = _FwpmNetEventSubscribe4 (hengine, &subscription, &_wfp_logcallback4, nullptr, &config.hnetevent); // win10rs5+
-
-				else if (_FwpmNetEventSubscribe3)
-					rc = _FwpmNetEventSubscribe3 (hengine, &subscription, &_wfp_logcallback3, nullptr, &config.hnetevent); // win10rs4+
-
-				else if (_FwpmNetEventSubscribe2)
-					rc = _FwpmNetEventSubscribe2 (hengine, &subscription, &_wfp_logcallback2, nullptr, &config.hnetevent); // win10+
-
-				else if (_FwpmNetEventSubscribe1)
-					rc = _FwpmNetEventSubscribe1 (hengine, &subscription, &_wfp_logcallback1, nullptr, &config.hnetevent); // win8+
-
-				else if (_FwpmNetEventSubscribe0)
-					rc = _FwpmNetEventSubscribe0 (hengine, &subscription, &_wfp_logcallback0, nullptr, &config.hnetevent); // win7+
-
-				else
-					rc = ERROR_INVALID_FUNCTION;
-
-				if (rc != ERROR_SUCCESS)
-				{
-					_app_logerror (L"FwpmNetEventSubscribe", rc, nullptr, false);
-				}
-				else
-				{
-					_app_loginit (true); // create log file
-					result = true;
-				}
+				_app_loginit (true); // create log file
 			}
-
-			FreeLibrary (hlib);
 		}
-	}
 
-	return result;
+		FreeLibrary (hlib);
+	}
 }
 
-bool _wfp_logunsubscribe (HANDLE hengine)
+void _wfp_logunsubscribe (HANDLE hengine)
 {
 	if (!hengine)
-		return false;
-
-	_app_loginit (false); // destroy log file handle if present
+		return;
 
 	if (config.hnetevent)
 	{
+		_app_loginit (false); // destroy log file handle if present
+
 		const DWORD rc = FwpmNetEventUnsubscribe (hengine, config.hnetevent);
 
 		if (rc == ERROR_SUCCESS)
-		{
 			config.hnetevent = nullptr;
-			return true;
-		}
 	}
-
-	return false;
 }
 
 void CALLBACK _wfp_logcallback (UINT32 flags, FILETIME const *pft, UINT8 const*app_id, SID * package_id, SID * user_id, UINT8 proto, FWP_IP_VERSION ipver, UINT32 remote_addr4, FWP_BYTE_ARRAY16 const* remote_addr6, UINT16 remote_port, UINT32 local_addr4, FWP_BYTE_ARRAY16 const* local_addr6, UINT16 local_port, UINT16 layer_id, UINT64 filter_id, UINT32 direction, bool is_allow, bool is_loopback)
@@ -373,10 +313,10 @@ void CALLBACK _wfp_logcallback (UINT32 flags, FILETIME const *pft, UINT8 const*a
 				FwpmFreeMemory ((void **)&layer);
 				return;
 			}
-			//else if (RtlEqualMemory (&layer->layerKey, &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4, sizeof (GUID)) || RtlEqualMemory (&layer->layerKey, &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6, sizeof (GUID)))
-			//{
-			//	direction = FWP_DIRECTION_INBOUND;
-			//}
+			else if (RtlEqualMemory (&layer->layerKey, &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4, sizeof (GUID)) || RtlEqualMemory (&layer->layerKey, &FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6, sizeof (GUID)))
+			{
+				direction = FWP_DIRECTION_INBOUND; // HACK!!! (issue #581)
+			}
 
 			FwpmFreeMemory ((void **)&layer);
 		}
@@ -672,7 +612,7 @@ void CALLBACK _wfp_logcallback1 (LPVOID, const FWPM_NET_EVENT2* pEvent)
 	_wfp_logcallback (pEvent->header.flags, &pEvent->header.timeStamp, pEvent->header.appId.data, pEvent->header.packageSid, pEvent->header.userId, pEvent->header.ipProtocol, pEvent->header.ipVersion, pEvent->header.remoteAddrV4, &pEvent->header.remoteAddrV6, pEvent->header.remotePort, pEvent->header.localAddrV4, &pEvent->header.localAddrV6, pEvent->header.localPort, layer_id, filter_id, direction, is_allow, is_loopback);
 }
 
-// win10+ callback
+// win10rs1+ callback
 void CALLBACK _wfp_logcallback2 (LPVOID, const FWPM_NET_EVENT3* pEvent)
 {
 	if (!pEvent)
@@ -887,7 +827,7 @@ UINT WINAPI LogThread (LPVOID lparam)
 			_r_fastlock_acquireshared (&lock_logbusy);
 
 			_app_formataddress (ptr_log->af, ptr_log->protocol, &ptr_log->remote_addr, 0, &ptr_log->remote_fmt, FMTADDR_USE_PROTOCOL | FMTADDR_RESOLVE_HOST);
-			_app_formataddress (ptr_log->af, ptr_log->protocol, &ptr_log->local_addr, 0, &ptr_log->local_fmt, FMTADDR_USE_PROTOCOL | FMTADDR_RESOLVE_HOST);
+			//_app_formataddress (ptr_log->af, ptr_log->protocol, &ptr_log->local_addr, 0, &ptr_log->local_fmt, FMTADDR_USE_PROTOCOL | FMTADDR_RESOLVE_HOST); // note: not used!
 
 			_r_fastlock_releaseshared (&lock_logbusy);
 

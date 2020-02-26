@@ -101,13 +101,13 @@ bool _app_initinterfacestate (HWND hwnd, bool is_forced)
 
 void _app_restoreinterfacestate (HWND hwnd, bool is_enabled)
 {
-	if (is_enabled)
-	{
-		SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_ENABLEBUTTON, IDM_TRAY_START, MAKELPARAM (TRUE, 0));
-		SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_ENABLEBUTTON, IDM_REFRESH, MAKELPARAM (TRUE, 0));
+	if (!is_enabled)
+		return;
 
-		_r_status_settext (hwnd, IDC_STATUSBAR, 0, app.LocaleString (_wfp_isfiltersinstalled () ? IDS_STATUS_FILTERS_ACTIVE : IDS_STATUS_FILTERS_INACTIVE, nullptr));
-	}
+	SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_ENABLEBUTTON, IDM_TRAY_START, MAKELPARAM (TRUE, 0));
+	SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_ENABLEBUTTON, IDM_REFRESH, MAKELPARAM (TRUE, 0));
+
+	_r_status_settext (hwnd, IDC_STATUSBAR, 0, app.LocaleString (_wfp_isfiltersinstalled () ? IDS_STATUS_FILTERS_ACTIVE : IDS_STATUS_FILTERS_INACTIVE, nullptr));
 }
 
 void _app_setinterfacestate (HWND hwnd)
@@ -123,12 +123,15 @@ void _app_setinterfacestate (HWND hwnd)
 
 	//SendDlgItemMessage (hwnd, IDC_STATUSBAR, SB_SETICON, 0, (LPARAM)hico_sm);
 
+	if (!_wfp_isfiltersapplying ())
+		_r_status_settext (hwnd, IDC_STATUSBAR, 0, app.LocaleString (is_filtersinstalled ? IDS_STATUS_FILTERS_ACTIVE : IDS_STATUS_FILTERS_INACTIVE, nullptr));
+
 	_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_START, app.LocaleString (is_filtersinstalled ? IDS_TRAY_STOP : IDS_TRAY_START, nullptr), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, is_filtersinstalled ? 1 : 0);
 
 	_r_tray_setinfo (hwnd, UID, hico_sm, APP_NAME);
 }
 
-bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, UINT16 port, LPWSTR * ptr_dest, DWORD flags)
+bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, UINT16 port, LPWSTR* ptr_dest, DWORD flags)
 {
 	if (!ptr_addr || !ptr_dest || (af != AF_INET && af != AF_INET6))
 		return false;
@@ -137,10 +140,7 @@ bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, U
 
 	WCHAR formatted_address[DNS_MAX_NAME_BUFFER_LENGTH] = {0};
 
-	if (proto && (flags & FMTADDR_USE_PROTOCOL) == FMTADDR_USE_PROTOCOL)
-		_r_str_printf (formatted_address, _countof (formatted_address), L"%s://", _app_getprotoname (proto, AF_UNSPEC).GetString ());
-
-	if ((flags & FMTADDR_AS_ARPA) == FMTADDR_AS_ARPA)
+	if ((flags & FMTADDR_AS_ARPA) != 0)
 	{
 		if (af == AF_INET)
 		{
@@ -158,11 +158,14 @@ bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, U
 	}
 	else
 	{
+		if ((flags & FMTADDR_USE_PROTOCOL) != 0)
+			_r_str_printf (formatted_address, _countof (formatted_address), L"%s://", _app_getprotoname (proto, AF_UNSPEC).GetString ());
+
 		WCHAR addr_str[DNS_MAX_NAME_BUFFER_LENGTH] = {0};
 
 		if (InetNtop (af, ptr_addr, addr_str, _countof (addr_str)))
 		{
-			if ((flags & FMTADDR_AS_RULE) == FMTADDR_AS_RULE)
+			if ((flags & FMTADDR_AS_RULE) != 0)
 			{
 				if (af == AF_INET)
 					result = !IN4_IS_ADDR_UNSPECIFIED ((PIN_ADDR)ptr_addr);
@@ -179,12 +182,12 @@ bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, U
 				_r_str_cat (formatted_address, _countof (formatted_address), addr_str);
 			}
 		}
+
+		if (port && (flags & FMTADDR_USE_PROTOCOL) == 0)
+			_r_str_cat (formatted_address, _countof (formatted_address), _r_fmt (!_r_str_isempty (formatted_address) ? L":%" PRIu16 : L"%" PRIu16, port));
 	}
 
-	if (port)
-		_r_str_cat (formatted_address, _countof (formatted_address), _r_fmt (!_r_str_isempty (formatted_address) ? L":%" PRIu16 : L"%" PRIu16, port));
-
-	if ((flags & FMTADDR_RESOLVE_HOST) == FMTADDR_RESOLVE_HOST)
+	if ((flags & FMTADDR_RESOLVE_HOST) != 0)
 	{
 		if (result && app.ConfigGet (L"IsNetworkResolutionsEnabled", false).AsBool ())
 		{
@@ -269,10 +272,10 @@ void _app_freeobjects_map (OBJECTS_MAP& ptr_map, bool is_forced)
 	}
 }
 
-void _app_freeobjects_vec (OBJECTS_VEC & ptr_vec)
+void _app_freeobjects_vec (OBJECTS_VEC& ptr_vec)
 {
-	for (size_t i = 0; i < ptr_vec.size (); i++)
-		_r_obj_dereference (ptr_vec.at (i));
+	for (auto &p : ptr_vec)
+		_r_obj_dereference (p);
 
 	ptr_vec.clear ();
 }
@@ -288,10 +291,13 @@ void _app_freethreadpool (THREADS_VEC* ptr_pool)
 	{
 		HANDLE& hthread = ptr_pool->at (i);
 
-		if (WaitForSingleObjectEx (hthread, 0, FALSE) == WAIT_OBJECT_0)
+		if (_r_fs_isvalidhandle (hthread))
 		{
-			SAFE_DELETE_HANDLE (hthread);
-			ptr_pool->erase (ptr_pool->begin () + i);
+			if (WaitForSingleObjectEx (hthread, 0, FALSE) == WAIT_OBJECT_0)
+			{
+				CloseHandle (hthread);
+				ptr_pool->erase (ptr_pool->begin () + i);
+			}
 		}
 	}
 }
@@ -458,7 +464,7 @@ PR_OBJECT _app_getsignatureinfo (size_t app_hash, const PITEM_APP ptr_app)
 
 		const HANDLE hfile = CreateFile (ptr_app->real_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
 
-		if (hfile != INVALID_HANDLE_VALUE)
+		if (_r_fs_isvalidhandle (hfile))
 		{
 			GUID WinTrustActionGenericVerifyV2 = WINTRUST_ACTION_GENERIC_VERIFY_V2;
 
@@ -955,6 +961,9 @@ rstring _app_getservicename (UINT16 port, LPCWSTR empty_text)
 		case 558:
 			return L"sdnskmp";
 
+		case 585:
+			return L"imap4-ssl";
+
 		case 587:
 			return L"submission";
 
@@ -962,7 +971,7 @@ rstring _app_getservicename (UINT16 port, LPCWSTR empty_text)
 			return L"ipp";
 
 		case 636:
-			return L"ldapssl";
+			return L"ldaps";
 
 		case 646:
 			return L"ldp";
@@ -1010,7 +1019,15 @@ rstring _app_getservicename (UINT16 port, LPCWSTR empty_text)
 			return L"ms-lsa";
 
 		case 1110:
-			return L"nfsd-status";
+			return L"nfsd";
+
+		case 1111:
+			return L"lmsocialserver";
+
+		case 1112:
+		case 1114:
+		case 4333:
+			return L"mini-sql";
 
 		case 1119:
 			return L"bnetgame";
@@ -1105,6 +1122,9 @@ rstring _app_getservicename (UINT16 port, LPCWSTR empty_text)
 
 		case 3389:
 			return L"ms-wbt-server";
+
+		case 3407:
+			return L"ldap-admin";
 
 		case 3540:
 			return L"pnrp-port";
@@ -1462,7 +1482,7 @@ rstring _app_getservicenamefromtag (HANDLE pid, const PVOID ptag)
 	return result;
 }
 
-rstring _app_getnetworkpath (DWORD pid, ULONG64 * pmodules, PINT picon_id, size_t * phash)
+rstring _app_getnetworkpath (DWORD pid, PULONG64 pmodules, PINT picon_id, size_t* phash)
 {
 	if (!pid)
 	{
@@ -2397,7 +2417,7 @@ void _app_refreshstatus (HWND hwnd, INT listview_id)
 		if (listview_id == INVALID_INT)
 			listview_id = _app_gettab_id (hwnd);
 
-		if ((SendDlgItemMessage (hwnd, listview_id, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_CHECKBOXES) == LVS_EX_CHECKBOXES)
+		if ((SendDlgItemMessage (hwnd, listview_id, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_CHECKBOXES) != 0)
 		{
 			const bool is_rules_lv = (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM);
 
@@ -2452,7 +2472,7 @@ rstring _app_parsehostaddress_dns (LPCWSTR hostname, USHORT port)
 
 	if (dnsStatus != DNS_ERROR_RCODE_NO_ERROR && dnsStatus != DNS_INFO_NO_RECORDS)
 	{
-		_app_logerror (L"DnsQuery (DNS_TYPE_A)", dnsStatus, hostname, true);
+		app.LogError (L"DnsQuery (DNS_TYPE_A)", dnsStatus, hostname, 0);
 	}
 	else
 	{
@@ -2483,7 +2503,7 @@ rstring _app_parsehostaddress_dns (LPCWSTR hostname, USHORT port)
 
 	if (dnsStatus != DNS_ERROR_RCODE_NO_ERROR && dnsStatus != DNS_INFO_NO_RECORDS)
 	{
-		_app_logerror (L"DnsQuery (DNS_TYPE_AAAA)", dnsStatus, hostname, true);
+		app.LogError (L"DnsQuery (DNS_TYPE_AAAA)", dnsStatus, hostname, 0);
 	}
 	else
 	{
@@ -2523,7 +2543,7 @@ rstring _app_parsehostaddress_wsa (LPCWSTR hostname, USHORT port)
 
 	if (rc != ERROR_SUCCESS)
 	{
-		_app_logerror (L"WSAStartup", rc, nullptr, true);
+		app.LogError (L"WSAStartup", rc, nullptr, 0);
 		return nullptr;
 	}
 
@@ -2541,7 +2561,7 @@ rstring _app_parsehostaddress_wsa (LPCWSTR hostname, USHORT port)
 
 	if (rc != ERROR_SUCCESS || !ppQueryResultsSet)
 	{
-		_app_logerror (L"GetAddrInfoEx", rc, hostname, true);
+		app.LogError (L"GetAddrInfoEx", rc, hostname, 0);
 		return nullptr;
 	}
 	else
@@ -2605,7 +2625,7 @@ bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * forma
 
 	if (rc != ERROR_SUCCESS)
 	{
-		_app_logerror (L"ParseNetworkString", rc, network_string, true);
+		app.LogError (L"ParseNetworkString", rc, network_string, 0);
 		return false;
 	}
 	else
@@ -3022,7 +3042,7 @@ INT _app_getlistview_id (EnumDataType type)
 	return 0;
 }
 
-INT _app_getposition (HWND hwnd, INT listview_id, size_t lparam)
+INT _app_getposition (HWND hwnd, INT listview_id, LPARAM lparam)
 {
 	LVFINDINFO lvfi = {0};
 
@@ -3291,9 +3311,9 @@ void _app_load_appxmanifest (PITEM_APP_HELPER ptr_app_item)
 		L"VSAppxManifest.xml",
 	};
 
-	for (size_t i = 0; i < _countof (appx_names); i++)
+	for (auto &name : appx_names)
 	{
-		path.Format (L"%s\\%s", ptr_app_item->real_path, appx_names[i]);
+		path.Format (L"%s\\%s", ptr_app_item->real_path, name);
 
 		if (_r_fs_exists (path))
 			goto DoOpen;
