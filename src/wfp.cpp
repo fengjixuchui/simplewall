@@ -71,24 +71,12 @@ bool _wfp_initialize (bool is_full)
 	}
 	else
 	{
-		// generate unique session key
-		if (!config.psession)
-		{
-			config.psession = new GUID;
-
-			if (FAILED (CoCreateGuid (config.psession)))
-				SAFE_DELETE (config.psession);
-		}
-
 		RtlSecureZeroMemory (&session, sizeof (session));
 
 		session.displayData.name = APP_NAME;
 		session.displayData.description = APP_NAME;
 
 		session.txnWaitTimeoutInMSec = TRANSACTION_TIMEOUT;
-
-		if (config.psession)
-			RtlCopyMemory (&session.sessionKey, config.psession, sizeof (GUID));
 
 		rc = FwpmEngineOpen (nullptr, RPC_C_AUTHN_WINNT, nullptr, &session, &config.hengine);
 
@@ -375,8 +363,6 @@ DoExit:
 void _wfp_uninitialize (bool is_full)
 {
 	HANDLE& hengine = _wfp_getenginehandle ();
-
-	SAFE_DELETE (config.psession);
 
 	if (!hengine)
 		return;
@@ -2025,9 +2011,10 @@ bool ByteBlobAlloc (const PVOID data, size_t length, FWP_BYTE_BLOB** lpblob)
 	if (!data || !length || !lpblob)
 		return false;
 
-	FWP_BYTE_BLOB* pblob = new FWP_BYTE_BLOB;
+	FWP_BYTE_BLOB* pblob = (FWP_BYTE_BLOB*)_r_mem_allocex (sizeof (FWP_BYTE_BLOB), HEAP_ZERO_MEMORY);
 
-	RtlSecureZeroMemory (pblob, sizeof (FWP_BYTE_BLOB));
+	if (!pblob)
+		return false;
 
 	pblob->data = (UINT8*)_r_mem_alloc (length);
 	pblob->size = (UINT32)length;
@@ -2039,7 +2026,7 @@ bool ByteBlobAlloc (const PVOID data, size_t length, FWP_BYTE_BLOB** lpblob)
 	return true;
 }
 
-void ByteBlobFree (FWP_BYTE_BLOB * *lpblob)
+void ByteBlobFree (FWP_BYTE_BLOB** lpblob)
 {
 	if (lpblob && *lpblob)
 	{
@@ -2048,7 +2035,7 @@ void ByteBlobFree (FWP_BYTE_BLOB * *lpblob)
 		if (blob)
 		{
 			_r_mem_free (blob->data);
-			SAFE_DELETE (blob);
+			_r_mem_free (blob);
 
 			*lpblob = nullptr;
 		}
