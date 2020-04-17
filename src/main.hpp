@@ -92,9 +92,6 @@ enum EnumInfo
 	InfoListviewId,
 };
 
-INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
-
 // config
 #define LANG_MENU 6
 #define UID 1984 // if you want to keep a secret, you must also hide it from yourself.
@@ -129,7 +126,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 #define WINDOWSSPYBLOCKER_URL L"https://github.com/crazy-max/WindowsSpyBlocker"
 
 #define BOOTTIME_FILTER_NAME L"Boot-time filter"
-#define SUBLAYER_WEIGHT_DEFAULT 65534u
+#define SUBLAYER_WEIGHT_DEFAULT 65534U
 
 #define SERVICE_SECURITY_DESCRIPTOR L"O:SYG:SYD:(A;;CCRC;;;%s)"
 
@@ -141,8 +138,10 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 #define DIVIDER_TRIM L"\r\n "
 
 #define SZ_TAB L"   "
+#define SZ_TAB_CRLF L"\r\n" SZ_TAB
 #define SZ_EMPTY L"<empty>"
-#define SZ_READONLY_RULE L"*"
+#define SZ_RULE_INTERNAL_MENU L"*"
+#define SZ_RULE_INTERNAL_TITLE L"Internal rule"
 #define SZ_UNKNOWN L"unknown"
 
 #define SZ_DIRECTION_REMOTE L"Remote"
@@ -290,9 +289,16 @@ struct STATIC_DATA
 
 typedef struct tagINSTALL_CONTEXT
 {
-	HWND hwnd = nullptr;
-	bool is_install = false;
+	HWND hwnd;
+	bool is_install;
 } INSTALL_CONTEXT, *PINSTALL_CONTEXT;
+
+typedef struct tagEDITOR_CONTEXT
+{
+	HWND hwnd;
+	INT listview_id;
+	INT item_id;
+} EDITOR_CONTEXT, *PEDITOR_CONTEXT;
 
 typedef struct tagITEM_APP
 {
@@ -437,7 +443,7 @@ typedef struct tagITEM_STATUS
 	size_t rules_global_count = 0;
 	size_t rules_predefined_count = 0;
 	size_t rules_user_count = 0;
-} ITEM_COUNT, *PITEM_STATUS;
+} ITEM_STATUS, *PITEM_STATUS;
 
 typedef struct tagITEM_LOG
 {
@@ -603,17 +609,3 @@ typedef struct tagITEM_LIST_ENTRY
 C_ASSERT (FIELD_OFFSET (ITEM_LIST_ENTRY, ListEntry) == 0);
 C_ASSERT (FIELD_OFFSET (ITEM_LIST_ENTRY, Body) == MEMORY_ALLOCATION_ALIGNMENT);
 
-typedef enum _SC_SERVICE_TAG_QUERY_TYPE
-{
-	ServiceNameFromTagInformation = 1,
-	ServiceNamesReferencingModuleInformation,
-	ServiceNameTagMappingInformation
-} SC_SERVICE_TAG_QUERY_TYPE, *PSC_SERVICE_TAG_QUERY_TYPE;
-
-typedef struct _SC_SERVICE_TAG_QUERY
-{
-	ULONG ProcessId;
-	ULONG ServiceTag;
-	ULONG Unknown;
-	PVOID Buffer;
-} SC_SERVICE_TAG_QUERY, *PSC_SERVICE_TAG_QUERY;

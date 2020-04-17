@@ -13,6 +13,7 @@ PR_OBJECT _app_getrulebyid (size_t idx);
 PR_OBJECT _app_getrulebyhash (size_t rule_hash);
 PR_OBJECT _app_getnetworkitem (size_t network_hash);
 size_t _app_getnetworkapp (size_t network_hash);
+COLORREF _app_getappcolor (INT listview_id, size_t app_hash);
 
 void _app_freeapplication (size_t app_hash);
 
@@ -21,6 +22,7 @@ void _app_getcount (PITEM_STATUS ptr_status);
 INT _app_getappgroup (size_t app_hash, const PITEM_APP ptr_app);
 INT _app_getrulegroup (const PITEM_RULE ptr_rule);
 INT _app_getruleicon (const PITEM_RULE ptr_rule);
+COLORREF _app_getrulecolor (INT listview_id, size_t rule_idx);
 
 rstring _app_gettooltip (INT listview_id, size_t lparam);
 
@@ -34,6 +36,7 @@ bool _app_ruleblocklistsetchange (PITEM_RULE ptr_rule, INT new_state);
 bool _app_ruleblocklistsetstate (PITEM_RULE ptr_rule, INT spy_state, INT update_state, INT extra_state);
 void _app_ruleblocklistset (HWND hwnd, INT spy_state, INT update_state, INT extra_state, bool is_instantapply);
 
+rstring _app_appexpandrules (size_t app_hash, LPCWSTR delimeter);
 rstring _app_rulesexpandapps (const PITEM_RULE ptr_rule, bool is_fordisplay, LPCWSTR delimeter);
 
 bool _app_isappfound (size_t app_hash);
