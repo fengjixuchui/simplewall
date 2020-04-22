@@ -142,6 +142,7 @@ enum EnumInfo
 #define SZ_EMPTY L"<empty>"
 #define SZ_RULE_INTERNAL_MENU L"*"
 #define SZ_RULE_INTERNAL_TITLE L"Internal rule"
+#define SZ_RULE_NEW_TITLE L"<new rule>"
 #define SZ_UNKNOWN L"unknown"
 
 #define SZ_DIRECTION_REMOTE L"Remote"
@@ -287,19 +288,6 @@ struct STATIC_DATA
 	bool is_neteventset = false;
 };
 
-typedef struct tagINSTALL_CONTEXT
-{
-	HWND hwnd;
-	bool is_install;
-} INSTALL_CONTEXT, *PINSTALL_CONTEXT;
-
-typedef struct tagEDITOR_CONTEXT
-{
-	HWND hwnd;
-	INT listview_id;
-	INT item_id;
-} EDITOR_CONTEXT, *PEDITOR_CONTEXT;
-
 typedef struct tagITEM_APP
 {
 	~tagITEM_APP ()
@@ -433,18 +421,6 @@ typedef struct tagITEM_RULE_CONFIG
 	bool is_enabled = false;
 } ITEM_RULE_CONFIG, *PITEM_RULE_CONFIG;
 
-typedef struct tagITEM_STATUS
-{
-	size_t apps_count = 0;
-	size_t apps_timer_count = 0;
-	size_t apps_unused_count = 0;
-
-	size_t rules_count = 0;
-	size_t rules_global_count = 0;
-	size_t rules_predefined_count = 0;
-	size_t rules_user_count = 0;
-} ITEM_STATUS, *PITEM_STATUS;
-
 typedef struct tagITEM_LOG
 {
 	~tagITEM_LOG ()
@@ -547,6 +523,31 @@ typedef struct tagITEM_NETWORK
 
 	bool is_connection = false;
 } ITEM_NETWORK, *PITEM_NETWORK;
+
+typedef struct tagITEM_STATUS
+{
+	size_t apps_count;
+	size_t apps_timer_count;
+	size_t apps_unused_count;
+
+	size_t rules_count;
+	size_t rules_global_count;
+	size_t rules_predefined_count;
+	size_t rules_user_count;
+} ITEM_STATUS, *PITEM_STATUS;
+
+typedef struct tagINSTALL_CONTEXT
+{
+	HWND hwnd;
+	bool is_install;
+} INSTALL_CONTEXT, *PINSTALL_CONTEXT;
+
+typedef struct tagEDITOR_CONTEXT
+{
+	HWND hwnd;
+	INT listview_id;
+	INT item_id;
+} EDITOR_CONTEXT, *PEDITOR_CONTEXT;
 
 typedef struct tagITEM_COLOR
 {

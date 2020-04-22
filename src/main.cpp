@@ -157,24 +157,6 @@ UINT WINAPI NetworkMonitorThread (LPVOID lparam)
 						network_map.erase (network_hash);
 
 						_r_obj_dereferenceex (ptr_network_object, 2);
-
-						// redraw listview item
-						if (is_highlighting_enabled)
-						{
-							const size_t app_hash = _app_getnetworkapp (network_hash);
-							INT app_listview_id = 0;
-
-							if (_app_getappinfo (app_hash, InfoListviewId, &app_listview_id, sizeof (app_listview_id)))
-							{
-								if (IsWindowVisible (GetDlgItem (hwnd, app_listview_id)))
-								{
-									const INT item_pos = _app_getposition (hwnd, app_listview_id, app_hash);
-
-									if (item_pos != INVALID_INT)
-										_r_listview_redraw (hwnd, app_listview_id, item_pos, item_pos);
-								}
-							}
-						}
 					}
 				}
 			}
@@ -235,8 +217,10 @@ bool _app_changefilters (HWND hwnd, bool is_install, bool is_forced)
 
 void addcolor (UINT locale_id, LPCWSTR config_name, bool is_enabled, LPCWSTR config_value, COLORREF default_clr)
 {
-	PITEM_COLOR ptr_clr = new ITEM_COLOR;
-	RtlSecureZeroMemory (ptr_clr, sizeof (ITEM_COLOR));
+	PITEM_COLOR ptr_clr = (PITEM_COLOR)_r_mem_allocex (sizeof (ITEM_COLOR), HEAP_ZERO_MEMORY);
+
+	if (!ptr_clr)
+		return;
 
 	if (!_r_str_isempty (config_name))
 		_r_str_alloc (&ptr_clr->pcfg_name, _r_str_length (config_name), config_name);
@@ -249,9 +233,9 @@ void addcolor (UINT locale_id, LPCWSTR config_name, bool is_enabled, LPCWSTR con
 		ptr_clr->new_clr = app.ConfigGet (config_value, default_clr, L"colors").AsUlong ();
 	}
 
-	ptr_clr->is_enabled = is_enabled;
-	ptr_clr->locale_id = locale_id;
 	ptr_clr->default_clr = default_clr;
+	ptr_clr->locale_id = locale_id;
+	ptr_clr->is_enabled = is_enabled;
 
 	colors.push_back (_r_obj_allocate (ptr_clr, &_app_dereferencecolor));
 }
@@ -869,8 +853,6 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 				case IDD_SETTINGS_HIGHLIGHTING:
 				{
-					_app_listviewsetfont (hwnd, IDC_COLORS, false);
-
 					_r_listview_setcolumn (hwnd, IDC_COLORS, 0, nullptr, -100);
 
 					for (INT i = 0; i < _r_listview_getitemcount (hwnd, IDC_COLORS); i++)
@@ -997,29 +979,32 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 					const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
 
-					if (listview_id != IDC_COLORS)
-						break;
-
-					if (IsWindowVisible (lpnmlv->hdr.hwndFrom) && (lpnmlv->uChanged & LVIF_STATE) && (lpnmlv->uNewState == 8192 || lpnmlv->uNewState == 4096) && lpnmlv->uNewState != lpnmlv->uOldState)
+					if ((lpnmlv->uChanged & LVIF_STATE) != 0)
 					{
-						if (_r_fastlock_islocked (&lock_checkbox))
-							break;
-
-						const bool new_val = (lpnmlv->uNewState == 8192) ? true : false;
-
-						const size_t idx = lpnmlv->lParam;
-						PR_OBJECT ptr_clr_object = _r_obj_reference (colors.at (idx));
-
-						if (ptr_clr_object)
+						if (listview_id == IDC_COLORS)
 						{
-							PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
+							if ((lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (1) || ((lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (2)))
+							{
+								if (_r_fastlock_islocked (&lock_checkbox))
+									break;
 
-							if (ptr_clr)
-								app.ConfigSet (ptr_clr->pcfg_name, new_val, L"colors");
+								const bool is_enabled = (lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (2);
 
-							_r_obj_dereference (ptr_clr_object);
+								const size_t idx = lpnmlv->lParam;
+								PR_OBJECT ptr_clr_object = _r_obj_reference (colors.at (idx));
 
-							_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT));
+								if (ptr_clr_object)
+								{
+									PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
+
+									if (ptr_clr)
+										app.ConfigSet (ptr_clr->pcfg_name, is_enabled, L"colors");
+
+									_r_obj_dereference (ptr_clr_object);
+
+									_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT));
+								}
+							}
 						}
 					}
 
@@ -1040,58 +1025,59 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 					const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
 
-					if (lpnmlv->iItem == INVALID_INT || listview_id != IDC_COLORS)
+					if (lpnmlv->iItem == INVALID_INT)
 						break;
 
-					const size_t idx = _r_listview_getitemlparam (hwnd, listview_id, lpnmlv->iItem);
-					PR_OBJECT ptr_clr_object_current = _r_obj_reference (colors.at (idx));
-
-					PITEM_COLOR ptr_clr_current = nullptr;
-
-					if (ptr_clr_object_current)
-						ptr_clr_current = (PITEM_COLOR)ptr_clr_object_current->pdata;
-
-					CHOOSECOLOR cc = {0};
-					COLORREF cust[16] = {0};
-
-					size_t index = 0;
-
-					for (auto &p : colors)
+					if (listview_id == IDC_COLORS)
 					{
-						PR_OBJECT ptr_clr_object = _r_obj_reference (p);
+						const size_t idx = _r_listview_getitemlparam (hwnd, listview_id, lpnmlv->iItem);
+						PR_OBJECT ptr_clr_object_current = _r_obj_reference (colors.at (idx));
 
-						if (ptr_clr_object)
-						{
-							PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
+						if (!ptr_clr_object_current)
+							break;
 
-							if (ptr_clr)
-								cust[index] = ptr_clr->default_clr;
+						PITEM_COLOR ptr_clr_current = (PITEM_COLOR)ptr_clr_object_current->pdata;
 
-							_r_obj_dereference (ptr_clr_object);
-						}
-
-						index += 1;
-					}
-
-					cc.lStructSize = sizeof (cc);
-					cc.Flags = CC_RGBINIT | CC_FULLOPEN;
-					cc.hwndOwner = hwnd;
-					cc.lpCustColors = cust;
-					cc.rgbResult = ptr_clr_current ? ptr_clr_current->new_clr : 0;
-
-					if (ChooseColor (&cc))
-					{
 						if (ptr_clr_current)
 						{
-							ptr_clr_current->new_clr = cc.rgbResult;
-							app.ConfigSet (ptr_clr_current->pcfg_value, cc.rgbResult, L"colors");
+							CHOOSECOLOR cc = {0};
+							COLORREF cust[16] = {0};
+
+							size_t index = 0;
+
+							for (auto &p : colors)
+							{
+								PR_OBJECT ptr_clr_object = _r_obj_reference (p);
+
+								if (ptr_clr_object)
+								{
+									PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
+
+									if (ptr_clr)
+										cust[index++] = ptr_clr->default_clr;
+
+									_r_obj_dereference (ptr_clr_object);
+								}
+							}
+
+							cc.lStructSize = sizeof (cc);
+							cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+							cc.hwndOwner = hwnd;
+							cc.lpCustColors = cust;
+							cc.rgbResult = ptr_clr_current->new_clr;
+
+							if (ChooseColor (&cc))
+							{
+								ptr_clr_current->new_clr = cc.rgbResult;
+								app.ConfigSet (ptr_clr_current->pcfg_value, cc.rgbResult, L"colors");
+
+								_r_listview_redraw (hwnd, IDC_COLORS);
+								_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT));
+							}
 						}
 
-						_r_listview_redraw (hwnd, IDC_COLORS);
-						_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT));
+						_r_obj_dereference (ptr_clr_object_current);
 					}
-
-					_r_obj_dereference (ptr_clr_object_current);
 
 					break;
 				}
@@ -1471,14 +1457,14 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					app.ConfigSet (L"IsExcludeCustomRules", !!(IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
-			}
+				}
 
 			break;
+			}
 		}
-	}
 
 	return FALSE;
-}
+	}
 
 void _app_resizewindow (HWND hwnd, LPARAM lparam)
 {
@@ -1699,6 +1685,11 @@ void _app_tabs_init (HWND hwnd)
 		if (!listview_id)
 			continue;
 
+		HWND hlistview = GetDlgItem (hwnd, listview_id);
+
+		if (!hlistview)
+			continue;
+
 		_app_listviewsetfont (hwnd, listview_id, false);
 
 		if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_RULES_CUSTOM)
@@ -1734,14 +1725,9 @@ void _app_tabs_init (HWND hwnd)
 			_r_listview_addcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_STATE, nullptr), 0, LVCFMT_RIGHT);
 		}
 
-		HWND hlistview = GetDlgItem (hwnd, listview_id);
+		_r_tab_adjustchild (hwnd, IDC_TAB, hlistview);
 
-		if (hlistview)
-		{
-			_r_tab_adjustchild (hwnd, IDC_TAB, hlistview);
-
-			BringWindowToTop (hlistview); // HACK!!!
-		}
+		BringWindowToTop (hlistview); // HACK!!!
 	}
 }
 
@@ -1800,12 +1786,15 @@ void _app_initialize ()
 	{
 		DWORD size = SECURITY_MAX_SID_SIZE;
 
-		config.padminsid = (PISID)_r_mem_alloc (size);
+		config.padminsid = (PISID)_r_mem_allocex (size, 0);
 
-		if (!CreateWellKnownSid (WinBuiltinAdministratorsSid, nullptr, config.padminsid, &size))
+		if (config.padminsid)
 		{
-			_r_mem_free (config.padminsid);
-			config.padminsid = nullptr;
+			if (!CreateWellKnownSid (WinBuiltinAdministratorsSid, nullptr, config.padminsid, &size))
+			{
+				_r_mem_free (config.padminsid);
+				config.padminsid = nullptr;
+			}
 		}
 	}
 
@@ -1815,7 +1804,6 @@ void _app_initialize ()
 		// get user sid
 		HANDLE htoken = nullptr;
 		DWORD token_length = 0;
-		PTOKEN_USER token_user = nullptr;
 
 		if (OpenProcessToken (NtCurrentProcess (), TOKEN_QUERY, &htoken))
 		{
@@ -1823,7 +1811,7 @@ void _app_initialize ()
 
 			if (GetLastError () == ERROR_INSUFFICIENT_BUFFER)
 			{
-				token_user = (PTOKEN_USER)_r_mem_alloc (token_length);
+				PTOKEN_USER token_user = (PTOKEN_USER)_r_mem_allocex (token_length, 0);
 
 				if (token_user)
 				{
@@ -2656,7 +2644,7 @@ find_wrap:
 						const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
 						const size_t idx = _r_listview_getitemlparam (hwnd, listview_id, lpnmlv->iItem);
 
-						_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, _app_gettooltip (listview_id, idx));
+						_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, _app_gettooltip (hwnd, listview_id, idx));
 
 						_r_fastlock_releaseshared (&lock_access);
 					}
@@ -2668,92 +2656,95 @@ find_wrap:
 				{
 					LPNMLISTVIEW lpnmlv = (LPNMLISTVIEW)lparam;
 
-					if (IsWindowVisible (lpnmlv->hdr.hwndFrom) && (lpnmlv->uChanged & LVIF_STATE) && (lpnmlv->uNewState == 8192 || lpnmlv->uNewState == 4096) && lpnmlv->uNewState != lpnmlv->uOldState)
+					if ((lpnmlv->uChanged & LVIF_STATE) != 0)
 					{
-						if (_r_fastlock_islocked (&lock_checkbox))
-							break;
-
-						const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
-						bool is_changed = false;
-
-						const bool new_val = (lpnmlv->uNewState == 8192) ? true : false;
-
-						if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
+						if ((lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (1) || ((lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (2)))
 						{
-							const size_t app_hash = lpnmlv->lParam;
-							PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
-
-							if (!ptr_app_object)
+							if (_r_fastlock_islocked (&lock_checkbox))
 								break;
 
-							PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+							const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
+							bool is_changed = false;
 
-							OBJECTS_VEC rules;
+							const bool is_enabled = (lpnmlv->uNewState & LVIS_STATEIMAGEMASK) == INDEXTOSTATEIMAGEMASK (2);
 
-							if (ptr_app)
+							if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 							{
-								if (ptr_app->is_enabled != new_val)
+								const size_t app_hash = lpnmlv->lParam;
+								PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+
+								if (!ptr_app_object)
+									break;
+
+								PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+
+								OBJECTS_VEC rules;
+
+								if (ptr_app)
 								{
-									ptr_app->is_enabled = new_val;
+									if (ptr_app->is_enabled != is_enabled)
+									{
+										ptr_app->is_enabled = is_enabled;
 
-									_r_fastlock_acquireshared (&lock_checkbox);
-									_app_setappiteminfo (hwnd, listview_id, lpnmlv->iItem, app_hash, ptr_app);
-									_r_fastlock_releaseshared (&lock_checkbox);
+										_r_fastlock_acquireshared (&lock_checkbox);
+										_app_setappiteminfo (hwnd, listview_id, lpnmlv->iItem, app_hash, ptr_app);
+										_r_fastlock_releaseshared (&lock_checkbox);
 
-									if (new_val)
-										_app_freenotify (app_hash, ptr_app);
+										if (is_enabled)
+											_app_freenotify (app_hash, ptr_app);
 
-									if (!new_val && _app_istimeractive (ptr_app))
-										_app_timer_reset (hwnd, ptr_app);
+										if (!is_enabled && _app_istimeractive (ptr_app))
+											_app_timer_reset (hwnd, ptr_app);
 
-									rules.push_back (ptr_app_object);
-									_wfp_create3filters (_wfp_getenginehandle (), rules, __LINE__);
+										rules.push_back (ptr_app_object);
+										_wfp_create3filters (_wfp_getenginehandle (), rules, __LINE__);
 
-									is_changed = true;
+										is_changed = true;
+									}
 								}
+
+								_r_obj_dereference (ptr_app_object);
+							}
+							else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
+							{
+								OBJECTS_VEC rules;
+
+								const size_t rule_idx = lpnmlv->lParam;
+								PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+
+								if (!ptr_rule_object)
+									break;
+
+								PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
+
+								if (ptr_rule)
+								{
+									if (ptr_rule->is_enabled != is_enabled)
+									{
+										_r_fastlock_acquireshared (&lock_checkbox);
+
+										_app_ruleenable (ptr_rule, is_enabled);
+										_app_setruleiteminfo (hwnd, listview_id, lpnmlv->iItem, ptr_rule, true);
+
+										_r_fastlock_releaseshared (&lock_checkbox);
+
+										rules.push_back (ptr_rule_object);
+										_wfp_create4filters (_wfp_getenginehandle (), rules, __LINE__);
+
+										is_changed = true;
+									}
+								}
+
+								_r_obj_dereference (ptr_rule_object);
 							}
 
-							_r_obj_dereference (ptr_app_object);
-						}
-						else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
-						{
-							OBJECTS_VEC rules;
-
-							const size_t rule_idx = lpnmlv->lParam;
-							PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
-
-							if (!ptr_rule_object)
-								break;
-
-							PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-							if (ptr_rule)
+							if (is_changed)
 							{
-								if (ptr_rule->is_enabled != new_val)
-								{
-									_r_fastlock_acquireshared (&lock_checkbox);
+								_app_listviewsort (hwnd, listview_id);
+								_app_refreshstatus (hwnd, listview_id);
 
-									_app_ruleenable (ptr_rule, new_val);
-									_app_setruleiteminfo (hwnd, listview_id, lpnmlv->iItem, ptr_rule, true);
-
-									_r_fastlock_releaseshared (&lock_checkbox);
-
-									rules.push_back (ptr_rule_object);
-									_wfp_create4filters (_wfp_getenginehandle (), rules, __LINE__);
-
-									is_changed = true;
-								}
+								_app_profile_save ();
 							}
-
-							_r_obj_dereference (ptr_rule_object);
-						}
-
-						if (is_changed)
-						{
-							_app_listviewsort (hwnd, listview_id);
-							_app_refreshstatus (hwnd, listview_id);
-
-							_app_profile_save ();
 						}
 					}
 
@@ -2980,7 +2971,7 @@ find_wrap:
 					{
 						SetMenuDefaultItem (hsubmenu, IDM_PROPERTIES, FALSE);
 
-						PR_OBJECT ptr_network_object = _r_obj_reference (network_map[hash_item]);
+						PR_OBJECT ptr_network_object = _app_getnetworkitem (hash_item);
 
 						if (ptr_network_object)
 						{
@@ -4543,7 +4534,8 @@ find_wrap:
 					while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 					{
 						const size_t network_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
-						PR_OBJECT ptr_network_object = _r_obj_reference (network_map[network_hash]);
+
+						PR_OBJECT ptr_network_object = _app_getnetworkitem (network_hash);
 
 						if (!ptr_network_object)
 							continue;

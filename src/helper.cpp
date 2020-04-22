@@ -107,15 +107,11 @@ bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, U
 
 			if (addr_hash)
 			{
-				_r_fastlock_acquireshared (&lock_cache);
 				const bool is_exists = cache_hosts.find (addr_hash) != cache_hosts.end ();
-				_r_fastlock_releaseshared (&lock_cache);
 
 				if (is_exists)
 				{
-					_r_fastlock_acquireshared (&lock_cache);
 					PR_OBJECT ptr_cache_object = _r_obj_reference (cache_hosts[addr_hash]);
-					_r_fastlock_releaseshared (&lock_cache);
 
 					if (ptr_cache_object)
 					{
@@ -136,11 +132,10 @@ bool _app_formataddress (ADDRESS_FAMILY af, UINT8 proto, const PVOID ptr_addr, U
 						_r_str_cat (formatted_address, _countof (formatted_address), _r_fmt (L" (%s)", ptr_cache));
 
 						_r_fastlock_acquireexclusive (&lock_cache);
-
 						_app_freeobjects_map (cache_hosts, false);
-						cache_hosts[addr_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
-
 						_r_fastlock_releaseexclusive (&lock_cache);
+
+						cache_hosts[addr_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
 					}
 				}
 			}
@@ -355,17 +350,13 @@ PR_OBJECT _app_getsignatureinfo (size_t app_hash, const PITEM_APP ptr_app)
 	if (!app_hash || !ptr_app || _r_str_isempty (ptr_app->real_path) || (ptr_app->type != DataAppRegular && ptr_app->type != DataAppService && ptr_app->type != DataAppUWP))
 		return nullptr;
 
-	_r_fastlock_acquireshared (&lock_cache);
 	const bool is_exists = cache_signatures.find (app_hash) != cache_signatures.end ();
-	_r_fastlock_releaseshared (&lock_cache);
 
 	PR_OBJECT ptr_cache_object = nullptr;
 
 	if (is_exists)
 	{
-		_r_fastlock_acquireshared (&lock_cache);
 		ptr_cache_object = _r_obj_reference (cache_signatures[app_hash]);
-		_r_fastlock_releaseshared (&lock_cache);
 	}
 	else
 	{
@@ -418,13 +409,12 @@ PR_OBJECT _app_getsignatureinfo (size_t app_hash, const PITEM_APP ptr_app)
 								if (CertGetNameString (psProvCert->pCert, CERT_NAME_ATTR_TYPE, 0, szOID_COMMON_NAME, ptr_cache, num_chars) > 1)
 								{
 									_r_fastlock_acquireexclusive (&lock_cache);
-
 									_app_freeobjects_map (cache_signatures, false);
+									_r_fastlock_releaseexclusive (&lock_cache);
+
 									cache_signatures[app_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
 
 									ptr_cache_object = _r_obj_reference (cache_signatures[app_hash]);
-
-									_r_fastlock_releaseexclusive (&lock_cache);
 								}
 								else
 								{
@@ -455,15 +445,11 @@ PR_OBJECT _app_getversioninfo (size_t app_hash, const PITEM_APP ptr_app)
 
 	PR_OBJECT ptr_cache_object = nullptr;
 
-	_r_fastlock_acquireshared (&lock_cache);
 	const bool is_exists = cache_versions.find (app_hash) != cache_versions.end ();
-	_r_fastlock_releaseshared (&lock_cache);
 
 	if (is_exists)
 	{
-		_r_fastlock_acquireshared (&lock_cache);
 		ptr_cache_object = _r_obj_reference (cache_versions[app_hash]);
-		_r_fastlock_releaseshared (&lock_cache);
 	}
 	else
 	{
@@ -545,13 +531,12 @@ PR_OBJECT _app_getversioninfo (size_t app_hash, const PITEM_APP ptr_app)
 						if (_r_str_alloc (&ptr_cache, buffer.GetLength (), buffer))
 						{
 							_r_fastlock_acquireexclusive (&lock_cache);
-
 							_app_freeobjects_map (cache_versions, false);
+							_r_fastlock_releaseexclusive (&lock_cache);
+
 							cache_versions[app_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
 
 							ptr_cache_object = _r_obj_reference (cache_versions[app_hash]);
-
-							_r_fastlock_releaseexclusive (&lock_cache);
 						}
 					}
 
@@ -1365,21 +1350,24 @@ COLORREF _app_getcolorvalue (size_t color_hash)
 	if (!color_hash)
 		return 0;
 
-	for (size_t i = 0; i < colors.size (); i++)
+	for (auto &p : colors)
 	{
-		PR_OBJECT ptr_clr_object = _r_obj_reference (colors.at (i));
+		PR_OBJECT ptr_clr_object = _r_obj_reference (p);
 
 		if (!ptr_clr_object)
 			continue;
 
 		const PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
 
-		if (ptr_clr && ptr_clr->clr_hash == color_hash)
+		if (ptr_clr)
 		{
-			const COLORREF result = ptr_clr->new_clr ? ptr_clr->new_clr : ptr_clr->default_clr;
-			_r_obj_dereference (ptr_clr_object);
+			if (ptr_clr->clr_hash == color_hash)
+			{
+				const COLORREF result = ptr_clr->new_clr ? ptr_clr->new_clr : ptr_clr->default_clr;
+				_r_obj_dereference (ptr_clr_object);
 
-			return result;
+				return result;
+			}
 		}
 
 		_r_obj_dereference (ptr_clr_object);
@@ -1395,23 +1383,27 @@ rstring _app_getservicenamefromtag (HANDLE pid, const PVOID ptag)
 
 	if (hlib)
 	{
-		typedef ULONG (NTAPI * IQTI) (PVOID, SC_SERVICE_TAG_QUERY_TYPE, PSC_SERVICE_TAG_QUERY); // I_QueryTagInformation
+		typedef ULONG (NTAPI* IQTI) (PVOID, SC_SERVICE_TAG_QUERY_TYPE, PSC_SERVICE_TAG_QUERY); // I_QueryTagInformation
 		const IQTI _I_QueryTagInformation = (IQTI)GetProcAddress (hlib, "I_QueryTagInformation");
 
 		if (_I_QueryTagInformation)
 		{
-			SC_SERVICE_TAG_QUERY nameFromTag;
-			RtlSecureZeroMemory (&nameFromTag, sizeof (nameFromTag));
+			PSC_SERVICE_TAG_QUERY pnameFromTag = (PSC_SERVICE_TAG_QUERY)_r_mem_allocex (sizeof (SC_SERVICE_TAG_QUERY), HEAP_ZERO_MEMORY);
 
-			nameFromTag.ProcessId = HandleToUlong (pid);
-			nameFromTag.ServiceTag = PtrToUlong (ptag);
-
-			_I_QueryTagInformation (nullptr, ServiceNameFromTagInformation, &nameFromTag);
-
-			if (nameFromTag.Buffer)
+			if (pnameFromTag)
 			{
-				result = static_cast<LPCWSTR>(nameFromTag.Buffer);
-				LocalFree (nameFromTag.Buffer);
+				pnameFromTag->ProcessId = HandleToUlong (pid);
+				pnameFromTag->ServiceTag = PtrToUlong (ptag);
+
+				_I_QueryTagInformation (nullptr, ServiceNameFromTagInformation, pnameFromTag);
+
+				if (pnameFromTag->Buffer)
+				{
+					result = static_cast<LPCWSTR>(pnameFromTag->Buffer);
+					LocalFree (pnameFromTag->Buffer);
+				}
+
+				_r_mem_free (pnameFromTag);
 			}
 		}
 	}
@@ -1574,7 +1566,6 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 					}
 
 					PITEM_NETWORK ptr_network = new ITEM_NETWORK;
-					RtlSecureZeroMemory (ptr_network, sizeof (ITEM_NETWORK));
 
 					const rstring path = _app_getnetworkpath (tcp4Table->table[i].dwOwningPid, tcp4Table->table[i].OwningModuleInfo, &ptr_network->icon_id, &ptr_network->app_hash);
 
@@ -1631,7 +1622,6 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 					}
 
 					PITEM_NETWORK ptr_network = new ITEM_NETWORK;
-					RtlSecureZeroMemory (ptr_network, sizeof (ITEM_NETWORK));
 
 					const rstring path = _app_getnetworkpath (tcp6Table->table[i].dwOwningPid, tcp6Table->table[i].OwningModuleInfo, &ptr_network->icon_id, &ptr_network->app_hash);
 
@@ -1691,7 +1681,6 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 					}
 
 					PITEM_NETWORK ptr_network = new ITEM_NETWORK;
-					RtlSecureZeroMemory (ptr_network, sizeof (ITEM_NETWORK));
 
 					const rstring path = _app_getnetworkpath (udp4Table->table[i].dwOwningPid, udp4Table->table[i].OwningModuleInfo, &ptr_network->icon_id, &ptr_network->app_hash);
 
@@ -1741,7 +1730,6 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 					}
 
 					PITEM_NETWORK ptr_network = new ITEM_NETWORK;
-					RtlSecureZeroMemory (ptr_network, sizeof (ITEM_NETWORK));
 
 					const rstring path = _app_getnetworkpath (udp6Table->table[i].dwOwningPid, udp6Table->table[i].OwningModuleInfo, &ptr_network->icon_id, &ptr_network->app_hash);
 
@@ -1854,7 +1842,6 @@ void _app_generate_packages ()
 				}
 
 				PITEM_APP_HELPER ptr_item = new ITEM_APP_HELPER;
-				RtlSecureZeroMemory (ptr_item, sizeof (ITEM_APP_HELPER));
 
 				ptr_item->type = DataAppUWP;
 				ptr_item->pdata = package_sid;
@@ -2045,7 +2032,6 @@ void _app_generate_services ()
 					continue;
 
 				PITEM_APP_HELPER ptr_item = new ITEM_APP_HELPER;
-				RtlSecureZeroMemory (ptr_item, sizeof (ITEM_APP_HELPER));
 
 				ptr_item->type = DataAppService;
 				ptr_item->timestamp = timestamp;
@@ -2488,7 +2474,7 @@ rstring _app_parsehostaddress_wsa (LPCWSTR hostname, USHORT port)
 	return result;
 }
 
-bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * format_ptr, PUSHORT port_ptr, FWP_V4_ADDR_AND_MASK * paddr4, FWP_V6_ADDR_AND_MASK * paddr6, LPWSTR paddr_dns, size_t dns_length)
+bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * format_ptr, PUSHORT port_ptr, FWP_V4_ADDR_AND_MASK* paddr4, FWP_V6_ADDR_AND_MASK* paddr6, LPWSTR paddr_dns, size_t dns_length)
 {
 	NET_ADDRESS_INFO ni;
 	RtlSecureZeroMemory (&ni, sizeof (ni));
@@ -2541,15 +2527,11 @@ bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * forma
 			{
 				const size_t dns_hash = _r_str_hash (ni.NamedAddress.Address);
 
-				_r_fastlock_acquireshared (&lock_cache);
 				const bool is_exists = cache_dns.find (dns_hash) != cache_dns.end ();
-				_r_fastlock_releaseshared (&lock_cache);
 
 				if (is_exists)
 				{
-					_r_fastlock_acquireshared (&lock_cache);
 					PR_OBJECT ptr_cache_object = _r_obj_reference (cache_dns[dns_hash]);
-					_r_fastlock_releaseshared (&lock_cache);
 
 					if (ptr_cache_object)
 					{
@@ -2580,11 +2562,10 @@ bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * forma
 					if (_r_str_alloc (&ptr_cache, host.GetLength (), host))
 					{
 						_r_fastlock_acquireexclusive (&lock_cache);
-
 						_app_freeobjects_map (cache_dns, false);
-						cache_dns[dns_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
-
 						_r_fastlock_releaseexclusive (&lock_cache);
+
+						cache_dns[dns_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
 					}
 
 					return true;
@@ -2602,8 +2583,11 @@ bool _app_parserulestring (rstring rule, PITEM_ADDRESS ptr_addr)
 {
 	_r_str_trim (rule, DIVIDER_TRIM); // trim whitespace
 
-	if (rule.IsEmpty () || _r_str_compare (rule, L"*") == 0)
+	if (rule.IsEmpty ())
 		return true;
+
+	if (!_app_isrulevalidchars (rule))
+		return false;
 
 	EnumDataType type = DataUnknown;
 	const size_t range_pos = _r_str_find (rule, rule.GetLength (), DIVIDER_RULE_RANGE);
@@ -2622,15 +2606,11 @@ bool _app_parserulestring (rstring rule, PITEM_ADDRESS ptr_addr)
 	{
 		const size_t rule_hash = _r_str_hash (rule);
 
-		_r_fastlock_acquireshared (&lock_cache);
 		const bool is_exists = cache_types.find (rule_hash) != cache_types.end ();
-		_r_fastlock_releaseshared (&lock_cache);
 
 		if (is_exists)
 		{
-			_r_fastlock_acquireshared (&lock_cache);
 			type = cache_types[rule_hash];
-			_r_fastlock_releaseshared (&lock_cache);
 		}
 		else
 		{
@@ -2649,14 +2629,10 @@ bool _app_parserulestring (rstring rule, PITEM_ADDRESS ptr_addr)
 
 			if (type != DataUnknown)
 			{
-				_r_fastlock_acquireexclusive (&lock_cache);
-
 				if (cache_types.size () >= UMAP_CACHE_LIMIT)
 					cache_types.clear ();
 
 				cache_types[rule_hash] = type;
-
-				_r_fastlock_releaseexclusive (&lock_cache);
 			}
 		}
 	}
@@ -2836,15 +2812,11 @@ bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR * pbuffer)
 	{
 		const size_t arpa_hash = _r_str_hash (pstraddr);
 
-		_r_fastlock_acquireshared (&lock_cache);
 		const bool is_exists = cache_arpa.find (arpa_hash) != cache_arpa.end ();
-		_r_fastlock_releaseshared (&lock_cache);
 
 		if (is_exists)
 		{
-			_r_fastlock_acquireshared (&lock_cache);
 			PR_OBJECT ptr_cache_object = _r_obj_reference (cache_arpa[arpa_hash]);
-			_r_fastlock_releaseshared (&lock_cache);
 
 			if (ptr_cache_object)
 			{
@@ -2876,11 +2848,10 @@ bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR * pbuffer)
 						if (_r_str_alloc (&ptr_cache, len, ppQueryResultsSet->Data.PTR.pNameHost))
 						{
 							_r_fastlock_acquireexclusive (&lock_cache);
-
 							_app_freeobjects_map (cache_arpa, false);
-							cache_arpa[arpa_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
-
 							_r_fastlock_releaseexclusive (&lock_cache);
+
+							cache_arpa[arpa_hash] = _r_obj_allocate (ptr_cache, &_app_dereferencestring);
 						}
 					}
 				}

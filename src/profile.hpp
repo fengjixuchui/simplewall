@@ -24,7 +24,7 @@ INT _app_getrulegroup (const PITEM_RULE ptr_rule);
 INT _app_getruleicon (const PITEM_RULE ptr_rule);
 COLORREF _app_getrulecolor (INT listview_id, size_t rule_idx);
 
-rstring _app_gettooltip (INT listview_id, size_t lparam);
+rstring _app_gettooltip (HWND hwnd, INT listview_id, size_t lparam);
 
 void _app_setappiteminfo (HWND hwnd, INT listview_id, INT item, size_t app_hash, PITEM_APP ptr_app);
 void _app_setruleiteminfo (HWND hwnd, INT listview_id, INT item, PITEM_RULE ptr_rule, bool include_apps);
@@ -46,10 +46,10 @@ bool _app_isapphaverule (size_t app_hash);
 bool _app_isappused (const PITEM_APP ptr_app, size_t app_hash);
 bool _app_isappexists (const PITEM_APP ptr_app);
 
-//bool _app_isruleblocklist (LPCWSTR name);
 bool _app_isrulehost (LPCWSTR rule);
 bool _app_isruleip (LPCWSTR rule);
 bool _app_isruleport (LPCWSTR rule);
+bool _app_isrulevalidchars (LPCWSTR rule);
 
 bool _app_profile_load_check (LPCWSTR path, EnumXmlType type, bool is_strict);
 void _app_profile_load_internal (LPCWSTR path, LPCWSTR path_backup, time_t* ptimestamp);

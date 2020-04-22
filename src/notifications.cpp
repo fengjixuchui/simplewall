@@ -9,7 +9,7 @@ HFONT hfont_text = nullptr;
 
 void _app_notifycreatewindow (HWND hwnd)
 {
-	config.hnotification = CreateDialog (app.GetHINSTANCE (), MAKEINTRESOURCE (IDD_NOTIFICATION), hwnd, &NotificationProc);
+	config.hnotification = CreateDialog (app.GetHINSTANCE (), MAKEINTRESOURCE (IDD_NOTIFICATION), nullptr, &NotificationProc);
 }
 
 bool _app_notifycommand (HWND hwnd, INT button_id, time_t seconds)
@@ -821,7 +821,7 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 							PITEM_LOG ptr_log = (PITEM_LOG)ptr_log_object->pdata;
 
 							if (ptr_log && ptr_log->app_hash)
-								_r_str_copy (buffer, _countof (buffer), _app_gettooltip (IDC_APPS_PROFILE, ptr_log->app_hash));
+								_r_str_copy (buffer, _countof (buffer), _app_gettooltip (nullptr, IDC_APPS_PROFILE, ptr_log->app_hash));
 
 							_r_obj_dereference (ptr_log_object);
 						}
