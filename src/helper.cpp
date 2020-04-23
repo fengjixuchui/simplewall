@@ -13,11 +13,6 @@ void _app_dereferenceappshelper (PVOID pdata)
 	delete PITEM_APP_HELPER (pdata);
 }
 
-void _app_dereferencecolor (PVOID pdata)
-{
-	delete PITEM_COLOR (pdata);
-}
-
 void _app_dereferencelog (PVOID pdata)
 {
 	delete PITEM_LOG (pdata);
@@ -1350,27 +1345,10 @@ COLORREF _app_getcolorvalue (size_t color_hash)
 	if (!color_hash)
 		return 0;
 
-	for (auto &p : colors)
+	for (auto &ptr_clr : colors)
 	{
-		PR_OBJECT ptr_clr_object = _r_obj_reference (p);
-
-		if (!ptr_clr_object)
-			continue;
-
-		const PITEM_COLOR ptr_clr = (PITEM_COLOR)ptr_clr_object->pdata;
-
-		if (ptr_clr)
-		{
-			if (ptr_clr->clr_hash == color_hash)
-			{
-				const COLORREF result = ptr_clr->new_clr ? ptr_clr->new_clr : ptr_clr->default_clr;
-				_r_obj_dereference (ptr_clr_object);
-
-				return result;
-			}
-		}
-
-		_r_obj_dereference (ptr_clr_object);
+		if (ptr_clr->clr_hash == color_hash)
+			return ptr_clr->new_clr ? ptr_clr->new_clr : ptr_clr->default_clr;
 	}
 
 	return 0;
@@ -1833,11 +1811,11 @@ void _app_generate_packages ()
 					}
 				}
 
-				RegCloseKey (hsubkey);
-
 				if (display_name.IsEmpty ())
 				{
 					_r_mem_free (package_sid);
+					RegCloseKey (hsubkey);
+
 					continue;
 				}
 
@@ -1846,13 +1824,15 @@ void _app_generate_packages ()
 				ptr_item->type = DataAppUWP;
 				ptr_item->pdata = package_sid;
 
-				rstring path = _r_reg_querystring (hsubkey, L"PackageRootFolder");
-
 				// query timestamp
 				ptr_item->timestamp = _r_reg_querytimestamp (hsubkey);
 
+				rstring path = _r_reg_querystring (hsubkey, L"PackageRootFolder");
+
 				if (!path.IsEmpty ())
 					_r_str_alloc (&ptr_item->real_path, path.GetLength (), path);
+
+				RegCloseKey (hsubkey);
 
 				_r_str_alloc (&ptr_item->display_name, display_name.GetLength (), display_name);
 				_r_str_alloc (&ptr_item->internal_name, package_sid_string.GetLength (), package_sid_string);
@@ -2393,86 +2373,86 @@ rstring _app_parsehostaddress_dns (LPCWSTR hostname, USHORT port)
 
 	return result;
 }
-
-rstring _app_parsehostaddress_wsa (LPCWSTR hostname, USHORT port)
-{
-	if (_r_str_isempty (hostname) || !app.ConfigGet (L"IsEnableWsaResolver", false).AsBool ())
-		return nullptr;
-
-	// initialize winsock (required by getnameinfo)
-	WSADATA wsaData = {0};
-	INT rc = WSAStartup (WINSOCK_VERSION, &wsaData);
-
-	if (rc != ERROR_SUCCESS)
-	{
-		app.LogError (L"WSAStartup", rc, nullptr, 0);
-		return nullptr;
-	}
-
-	rstring result;
-
-	ADDRINFOEXW hints = {0};
-	ADDRINFOEXW * ppQueryResultsSet = nullptr;
-
-	hints.ai_family = AF_UNSPEC;
-	hints.ai_socktype = SOCK_STREAM;
-	hints.ai_protocol = IPPROTO_TCP;
-
-	LPGUID lpNspid = nullptr;
-	rc = GetAddrInfoEx (hostname, L"domain", NS_DNS, lpNspid, &hints, &ppQueryResultsSet, nullptr, nullptr, nullptr, nullptr);
-
-	if (rc != ERROR_SUCCESS || !ppQueryResultsSet)
-	{
-		app.LogError (L"GetAddrInfoEx", rc, hostname, 0);
-		return nullptr;
-	}
-	else
-	{
-		for (auto current = ppQueryResultsSet; current != nullptr; current = current->ai_next)
-		{
-			WCHAR printableIP[INET6_ADDRSTRLEN] = {0};
-
-			if (current->ai_family == AF_INET)
-			{
-				struct sockaddr_in* sock_in4 = (struct sockaddr_in*)current->ai_addr;
-				PIN_ADDR addr4 = &(sock_in4->sin_addr);
-
-				if (IN4_IS_ADDR_UNSPECIFIED (addr4))
-					continue;
-
-				InetNtop (current->ai_family, addr4, printableIP, _countof (printableIP));
-			}
-			else if (current->ai_family == AF_INET6)
-			{
-				struct sockaddr_in6* sock_in6 = (struct sockaddr_in6*)current->ai_addr;
-				PIN6_ADDR addr6 = &(sock_in6->sin6_addr);
-
-				if (IN6_IS_ADDR_UNSPECIFIED (addr6))
-					continue;
-
-				InetNtop (current->ai_family, addr6, printableIP, _countof (printableIP));
-			}
-
-			if (_r_str_isempty (printableIP))
-				continue;
-
-			result.Append (printableIP);
-
-			if (port)
-				result.AppendFormat (L":%d", port);
-
-			result.Append (DIVIDER_RULE);
-		}
-
-		_r_str_trim (result, DIVIDER_RULE);
-	}
-
-	FreeAddrInfoEx (ppQueryResultsSet);
-
-	WSACleanup ();
-
-	return result;
-}
+//
+//rstring _app_parsehostaddress_wsa (LPCWSTR hostname, USHORT port)
+//{
+//	if (_r_str_isempty (hostname) || !app.ConfigGet (L"IsEnableWsaResolver", false).AsBool ())
+//		return nullptr;
+//
+//	// initialize winsock (required by getnameinfo)
+//	WSADATA wsaData = {0};
+//	INT rc = WSAStartup (WINSOCK_VERSION, &wsaData);
+//
+//	if (rc != ERROR_SUCCESS)
+//	{
+//		app.LogError (L"WSAStartup", rc, nullptr, 0);
+//		return nullptr;
+//	}
+//
+//	rstring result;
+//
+//	ADDRINFOEXW hints = {0};
+//	ADDRINFOEXW * ppQueryResultsSet = nullptr;
+//
+//	hints.ai_family = AF_UNSPEC;
+//	hints.ai_socktype = SOCK_STREAM;
+//	hints.ai_protocol = IPPROTO_TCP;
+//
+//	LPGUID lpNspid = nullptr;
+//	rc = GetAddrInfoEx (hostname, L"domain", NS_DNS, lpNspid, &hints, &ppQueryResultsSet, nullptr, nullptr, nullptr, nullptr);
+//
+//	if (rc != ERROR_SUCCESS || !ppQueryResultsSet)
+//	{
+//		app.LogError (L"GetAddrInfoEx", rc, hostname, 0);
+//		return nullptr;
+//	}
+//	else
+//	{
+//		for (auto current = ppQueryResultsSet; current != nullptr; current = current->ai_next)
+//		{
+//			WCHAR printableIP[INET6_ADDRSTRLEN] = {0};
+//
+//			if (current->ai_family == AF_INET)
+//			{
+//				struct sockaddr_in* sock_in4 = (struct sockaddr_in*)current->ai_addr;
+//				PIN_ADDR addr4 = &(sock_in4->sin_addr);
+//
+//				if (IN4_IS_ADDR_UNSPECIFIED (addr4))
+//					continue;
+//
+//				InetNtop (current->ai_family, addr4, printableIP, _countof (printableIP));
+//			}
+//			else if (current->ai_family == AF_INET6)
+//			{
+//				struct sockaddr_in6* sock_in6 = (struct sockaddr_in6*)current->ai_addr;
+//				PIN6_ADDR addr6 = &(sock_in6->sin6_addr);
+//
+//				if (IN6_IS_ADDR_UNSPECIFIED (addr6))
+//					continue;
+//
+//				InetNtop (current->ai_family, addr6, printableIP, _countof (printableIP));
+//			}
+//
+//			if (_r_str_isempty (printableIP))
+//				continue;
+//
+//			result.Append (printableIP);
+//
+//			if (port)
+//				result.AppendFormat (L":%d", port);
+//
+//			result.Append (DIVIDER_RULE);
+//		}
+//
+//		_r_str_trim (result, DIVIDER_RULE);
+//	}
+//
+//	FreeAddrInfoEx (ppQueryResultsSet);
+//
+//	WSACleanup ();
+//
+//	return result;
+//}
 
 bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * format_ptr, PUSHORT port_ptr, FWP_V4_ADDR_AND_MASK* paddr4, FWP_V6_ADDR_AND_MASK* paddr6, LPWSTR paddr_dns, size_t dns_length)
 {
@@ -2546,8 +2526,8 @@ bool _app_parsenetworkstring (LPCWSTR network_string, NET_ADDRESS_FORMAT * forma
 
 				rstring host = _app_parsehostaddress_dns (ni.NamedAddress.Address, port);
 
-				if (host.IsEmpty ())
-					host = _app_parsehostaddress_wsa (ni.NamedAddress.Address, port);
+				//if (host.IsEmpty ())
+				//	host = _app_parsehostaddress_wsa (ni.NamedAddress.Address, port);
 
 				if (host.IsEmpty ())
 				{
