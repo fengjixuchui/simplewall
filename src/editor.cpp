@@ -20,9 +20,7 @@ INT_PTR CALLBACK AddRuleProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 			_r_wnd_center (hwnd, GetParent (hwnd));
 
 			// localize window
-			SetWindowText (hwnd, app.LocaleString (IDS_OPENRULESEDITOR, nullptr));
-
-			SetDlgItemText (hwnd, IDC_RULE, app.LocaleString (IDS_RULE, L":"));
+			SetWindowText (hwnd, app.LocaleString (IDS_RULE, nullptr));
 
 			if (pcontext->item_id != INVALID_INT)
 				SetDlgItemText (hwnd, IDC_RULE_ID, _r_listview_getitemtext (pcontext->hwnd, pcontext->listview_id, pcontext->item_id, 0));
@@ -48,7 +46,7 @@ INT_PTR CALLBACK AddRuleProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 		case WM_CLOSE:
 		{
-			EndDialog (hwnd, 0);
+			EndDialog (hwnd, FALSE);
 			break;
 		}
 
@@ -93,7 +91,7 @@ INT_PTR CALLBACK AddRuleProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 					if (pcontext->item_id == INVALID_INT)
 					{
-						INT new_item_id = _r_listview_getitemcount (pcontext->hwnd, pcontext->listview_id);
+						const INT new_item_id = _r_listview_getitemcount (pcontext->hwnd, pcontext->listview_id);
 						_r_listview_additem (pcontext->hwnd, pcontext->listview_id, new_item_id, 0, rule_single, I_IMAGENONE, I_GROUPIDNONE, new_item_id);
 					}
 					else
@@ -107,7 +105,7 @@ INT_PTR CALLBACK AddRuleProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 				case IDCANCEL: // process Esc key
 				case IDC_CLOSE:
 				{
-					EndDialog (hwnd, 0);
+					EndDialog (hwnd, FALSE);
 					break;
 				}
 			}
@@ -244,7 +242,7 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 			{
 				SetDlgItemText (hwnd, IDC_RULE_REMOTE, app.LocaleString (IDS_RULE, L" (" SZ_DIRECTION_REMOTE L"):"));
 
-				_r_listview_setstyle (hwnd, IDC_RULE_REMOTE_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP);
+				_r_listview_setstyle (hwnd, IDC_RULE_REMOTE_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP, FALSE);
 				_r_listview_addcolumn (hwnd, IDC_RULE_REMOTE_ID, 0, nullptr, -100, 0);
 
 				if (!_r_str_isempty (ptr_rule->prule_remote))
@@ -284,7 +282,7 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 			{
 				SetDlgItemText (hwnd, IDC_RULE_LOCAL, app.LocaleString (IDS_RULE, L" (" SZ_DIRECTION_LOCAL L"):"));
 
-				_r_listview_setstyle (hwnd, IDC_RULE_LOCAL_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP);
+				_r_listview_setstyle (hwnd, IDC_RULE_LOCAL_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP, FALSE);
 				_r_listview_addcolumn (hwnd, IDC_RULE_LOCAL_ID, 0, nullptr, -100, 0);
 
 				if (!_r_str_isempty (ptr_rule->prule_local))
@@ -324,13 +322,11 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 			{
 				_app_listviewsetview (hwnd, IDC_RULE_APPS_ID);
 
-				_r_listview_setstyle (hwnd, IDC_RULE_APPS_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES);
+				_r_listview_setstyle (hwnd, IDC_RULE_APPS_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES, FALSE);
 				_r_listview_addcolumn (hwnd, IDC_RULE_APPS_ID, 0, app.LocaleString (IDS_NAME, nullptr), -100, LVCFMT_LEFT);
 
 				// apps (apply to)
 				{
-					INT item = 0;
-
 					_r_fastlock_acquireshared (&lock_access);
 
 					for (auto &p : apps)
@@ -360,12 +356,10 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 
 						_r_fastlock_acquireshared (&lock_checkbox);
 
-						_r_listview_additem (hwnd, IDC_RULE_APPS_ID, item, 0, _r_path_getfilename (ptr_app->display_name), ptr_app->icon_id, I_GROUPIDNONE, p.first);
-						_r_listview_setitemcheck (hwnd, IDC_RULE_APPS_ID, item, is_enabled);
+						_r_listview_additem (hwnd, IDC_RULE_APPS_ID, 0, 0, _r_path_getfilename (ptr_app->display_name), ptr_app->icon_id, I_GROUPIDNONE, p.first);
+						_r_listview_setitemcheck (hwnd, IDC_RULE_APPS_ID, 0, is_enabled);
 
 						_r_fastlock_releaseshared (&lock_checkbox);
-
-						item += 1;
 
 						_r_obj_dereference (ptr_app_object);
 					}
@@ -465,11 +459,11 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 						const UINT id_edit = is_remote ? IDC_RULE_REMOTE_EDIT : IDC_RULE_LOCAL_EDIT;
 						const UINT id_delete = is_remote ? IDC_RULE_REMOTE_DELETE : IDC_RULE_LOCAL_DELETE;
 
-						AppendMenu (hsubmenu, MF_BYCOMMAND, id_add, app.LocaleString (IDS_ADD, L"..."));
-						AppendMenu (hsubmenu, MF_BYCOMMAND, id_edit, app.LocaleString (IDS_EDIT2, L"..."));
-						AppendMenu (hsubmenu, MF_BYCOMMAND, id_delete, app.LocaleString (IDS_DELETE, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, id_add, app.LocaleString (IDS_ADD, L"..."));
+						AppendMenu (hsubmenu, MF_STRING, id_edit, app.LocaleString (IDS_EDIT2, L"..."));
+						AppendMenu (hsubmenu, MF_STRING, id_delete, app.LocaleString (IDS_DELETE, nullptr));
 						AppendMenu (hsubmenu, MF_SEPARATOR, 0, nullptr);
-						AppendMenu (hsubmenu, MF_BYCOMMAND, IDM_COPY, app.LocaleString (IDS_COPY, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, nullptr));
 
 						if (ptr_rule->is_readonly)
 						{
@@ -487,12 +481,12 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 					}
 					else if (listview_id == IDC_RULE_APPS_ID)
 					{
-						AppendMenu (hsubmenu, MF_BYCOMMAND, IDM_CHECK, app.LocaleString (IDS_CHECK, nullptr));
-						AppendMenu (hsubmenu, MF_BYCOMMAND, IDM_UNCHECK, app.LocaleString (IDS_UNCHECK, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDM_CHECK, app.LocaleString (IDS_CHECK, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDM_UNCHECK, app.LocaleString (IDS_UNCHECK, nullptr));
 						AppendMenu (hsubmenu, MF_SEPARATOR, 0, nullptr);
-						AppendMenu (hsubmenu, MF_BYCOMMAND, IDM_PROPERTIES, app.LocaleString (IDS_SHOWINLIST, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_SHOWINLIST, nullptr));
 						AppendMenu (hsubmenu, MF_SEPARATOR, 0, nullptr);
-						AppendMenu (hsubmenu, MF_BYCOMMAND, IDM_COPY, app.LocaleString (IDS_COPY, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, nullptr));
 
 						if (ptr_rule->type != DataRuleCustom)
 						{
@@ -710,13 +704,11 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 
 					while ((item = (INT)SendDlgItemMessage (hwnd, IDC_RULE_APPS_ID, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 					{
-						size_t app_hash = _r_listview_getitemlparam (hwnd, IDC_RULE_APPS_ID, item);
-						INT app_listview_id = 0;
+						const size_t app_hash = _r_listview_getitemlparam (hwnd, IDC_RULE_APPS_ID, item);
+						const INT app_listview_id = (INT)_app_getappinfo (app_hash, InfoListviewId);
 
-						if (_app_getappinfo (app_hash, InfoListviewId, &app_listview_id, sizeof (app_listview_id)))
-						{
+						if (app_listview_id)
 							_app_showitem (app.GetHWND (), app_listview_id, _app_getposition (app.GetHWND (), app_listview_id, app_hash));
-						}
 					}
 
 					break;
@@ -771,7 +763,7 @@ INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 			if (!ptr_rule_object)
 			{
-				EndDialog (hwnd, 0);
+				EndDialog (hwnd, FALSE);
 				return FALSE;
 			}
 
@@ -779,7 +771,7 @@ INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 			if (!ptr_rule)
 			{
-				EndDialog (hwnd, 0);
+				EndDialog (hwnd, FALSE);
 				return FALSE;
 			}
 
@@ -832,7 +824,7 @@ INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 
 		case WM_CLOSE:
 		{
-			EndDialog (hwnd, 0);
+			EndDialog (hwnd, FALSE);
 			break;
 		}
 
@@ -999,7 +991,7 @@ INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 				case IDCANCEL: // process Esc key
 				case IDC_CLOSE:
 				{
-					EndDialog (hwnd, 0);
+					EndDialog (hwnd, FALSE);
 					break;
 				}
 			}

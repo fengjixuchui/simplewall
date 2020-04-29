@@ -271,13 +271,18 @@ bool _app_notifyshow (HWND hwnd, PR_OBJECT ptr_log_object, bool is_forced, bool 
 	{
 		const bool is_inbound = (ptr_log->direction == FWP_DIRECTION_INBOUND);
 
+		LPWSTR remote_fmt = nullptr;
+		_app_formataddress (ptr_log->af, 0, &ptr_log->remote_addr, 0, &remote_fmt, FMTADDR_RESOLVE_HOST);
+
 		_r_ctrl_settabletext (hwnd, IDC_FILE_ID, app.LocaleString (IDS_NAME, L":"), IDC_FILE_TEXT, !_r_str_isempty (ptr_app->display_name) ? _r_path_getfilename (ptr_app->display_name) : empty_text);
 		_r_ctrl_settabletext (hwnd, IDC_SIGNATURE_ID, app.LocaleString (IDS_SIGNATURE, L":"), IDC_SIGNATURE_TEXT, is_signed.IsEmpty () ? empty_text : is_signed);
-		_r_ctrl_settabletext (hwnd, IDC_ADDRESS_ID, app.LocaleString (IDS_ADDRESS, L":"), IDC_ADDRESS_TEXT, !_r_str_isempty (ptr_log->remote_fmt) ? ptr_log->remote_fmt : empty_text);
+		_r_ctrl_settabletext (hwnd, IDC_ADDRESS_ID, app.LocaleString (IDS_ADDRESS, L":"), IDC_ADDRESS_TEXT, !_r_str_isempty (remote_fmt) ? remote_fmt : empty_text);
 		_r_ctrl_settabletext (hwnd, IDC_PORT_ID, app.LocaleString (IDS_PORT, L":"), IDC_PORT_TEXT, ptr_log->remote_port ? _app_formatport (ptr_log->remote_port, false).GetString () : empty_text);
 		_r_ctrl_settabletext (hwnd, IDC_DIRECTION_ID, app.LocaleString (IDS_DIRECTION, L":"), IDC_DIRECTION_TEXT, app.LocaleString (is_inbound ? IDS_DIRECTION_2 : IDS_DIRECTION_1, ptr_log->is_loopback ? L" (Loopback)" : nullptr));
 		_r_ctrl_settabletext (hwnd, IDC_FILTER_ID, app.LocaleString (IDS_FILTER, L":"), IDC_FILTER_TEXT, !_r_str_isempty (ptr_log->filter_name) ? ptr_log->filter_name : empty_text);
 		_r_ctrl_settabletext (hwnd, IDC_DATE_ID, app.LocaleString (IDS_DATE, L":"), IDC_DATE_TEXT, _r_fmt_date (ptr_log->date, FDTF_SHORTDATE | FDTF_LONGTIME));
+
+		SAFE_DELETE_ARRAY (remote_fmt);
 	}
 
 	_r_ctrl_settext (hwnd, IDC_RULES_BTN, app.LocaleString (IDS_TRAY_RULES, nullptr));
@@ -774,16 +779,10 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 					}
 					else if (nmlp->idFrom == IDC_ALLOW_BTN)
 					{
-						AppendMenu (hsubmenu, MF_BYPOSITION, IDC_ALLOW_BTN, app.LocaleString (IDS_ACTION_ALLOW, nullptr));
+						AppendMenu (hsubmenu, MF_STRING, IDC_ALLOW_BTN, app.LocaleString (IDS_ACTION_ALLOW, nullptr));
 						AppendMenu (hsubmenu, MF_SEPARATOR, 0, nullptr);
 
-						UINT index = 0;
-
-						for (auto &timer : timers)
-						{
-							AppendMenu (hsubmenu, MF_BYPOSITION, IDX_TIMER + index, _r_fmt_interval (timer + 1, 1));
-							index += 1;
-						}
+						_app_generate_timermenu (hsubmenu, 0);
 
 						_r_menu_checkitem (hsubmenu, IDC_ALLOW_BTN, IDC_ALLOW_BTN, MF_BYCOMMAND, IDC_ALLOW_BTN);
 					}
@@ -1093,17 +1092,17 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 								_r_obj_dereference (ptr_app_object);
 							}
 
-							LPWSTR prule = nullptr;
+							LPWSTR rule = nullptr;
 
-							if (_app_formataddress (ptr_log->af, 0, &ptr_log->remote_addr, ptr_log->remote_port, &prule, FMTADDR_AS_RULE))
+							if (_app_formataddress (ptr_log->af, 0, &ptr_log->remote_addr, ptr_log->remote_port, &rule, FMTADDR_AS_RULE))
 							{
-								size_t len = _r_str_length (prule);
+								size_t len = _r_str_length (rule);
 
-								_r_str_alloc (&ptr_rule->pname, len, prule);
-								_r_str_alloc (&ptr_rule->prule_remote, len, prule);
+								_r_str_alloc (&ptr_rule->pname, len, rule);
+								_r_str_alloc (&ptr_rule->prule_remote, len, rule);
 							}
 
-							SAFE_DELETE_ARRAY (prule);
+							SAFE_DELETE_ARRAY (rule);
 						}
 
 						_r_obj_dereference (ptr_log_object);

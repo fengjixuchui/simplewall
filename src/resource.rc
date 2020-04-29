@@ -172,68 +172,6 @@ BEGIN
 	END
 END
 
-IDM_APPS MENU
-BEGIN
-	POPUP ""
-	BEGIN
-		MENUITEM " ", IDM_ADD_FILE
-		MENUITEM SEPARATOR
-		POPUP " "
-		BEGIN
-			MENUITEM " ", IDM_DISABLENOTIFICATIONS
-		END
-		POPUP " "
-		BEGIN
-			MENUITEM " ", IDM_DISABLETIMER
-			MENUITEM SEPARATOR
-		END
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_CHECK
-		MENUITEM " ", IDM_UNCHECK
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_SELECT_ALL
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_EXPLORE
-		MENUITEM " ", IDM_DELETE
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_COPY
-		MENUITEM " ", IDM_COPY2
-	END
-END
-
-IDM_RULES MENU
-BEGIN
-	POPUP ""
-	BEGIN
-		MENUITEM " ", IDM_OPENRULESEDITOR
-		MENUITEM " ", IDM_PROPERTIES
-		MENUITEM " ", IDM_DELETE
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_CHECK
-		MENUITEM " ", IDM_UNCHECK
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_SELECT_ALL
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_COPY
-		MENUITEM " ", IDM_COPY2
-	END
-END
-
-IDM_NETWORK MENU
-BEGIN
-	POPUP ""
-	BEGIN
-		MENUITEM " ", IDM_PROPERTIES
-		MENUITEM " ", IDM_NETWORK_CLOSE
-		MENUITEM " ", IDM_OPENRULESEDITOR
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_EXPLORE
-		MENUITEM SEPARATOR
-		MENUITEM " ", IDM_COPY
-		MENUITEM " ", IDM_COPY2
-	END
-END
-
 //
 // Dialog resources
 //
@@ -252,8 +190,8 @@ BEGIN
 END
 
 IDD_NOTIFICATION DIALOGEX 0, 0, 320, 178
-STYLE WS_POPUP | WS_SYSMENU | WS_CAPTION | WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | DS_SHELLFONT | NOT WS_VISIBLE
-EXSTYLE WS_EX_APPWINDOW | WS_EX_TOPMOST
+STYLE WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_POPUP | WS_BORDER | WS_SYSMENU | WS_CAPTION | DS_SHELLFONT | NOT WS_VISIBLE
+EXSTYLE WS_EX_APPWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT
 FONT 8, "Ms Shell Dlg"
 BEGIN
 	CONTROL			"", IDC_HEADER_ID, WC_STATIC, SS_OWNERDRAW, 0, 0, 322, 40
@@ -351,17 +289,16 @@ BEGIN
 	LTEXT			"", IDC_RULE_APPS_HINT, 6, 154, 256, 22
 END
 
-IDD_EDITOR_ADDRULE DIALOGEX 0, 0, 212, 170
+IDD_EDITOR_ADDRULE DIALOGEX 0, 0, 220, 158
 STYLE WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_POPUP | WS_BORDER | WS_SYSMENU | WS_CAPTION | DS_SHELLFONT | DS_MODALFRAME
 FONT 8, "Ms Shell Dlg"
 BEGIN
-	LTEXT			"", IDC_RULE, 8, 6, 196, 12, SS_CENTERIMAGE
-	EDITTEXT		IDC_RULE_ID, 8, 20, 196, 12, WS_TABSTOP | ES_AUTOHSCROLL
+	EDITTEXT		IDC_RULE_ID, 8, 8, 204, 12, WS_TABSTOP | ES_AUTOHSCROLL
 
-	EDITTEXT		IDC_RULE_HINT, 8, 38, 196, 104, WS_VSCROLL | WS_BORDER | NOT WS_TABSTOP | ES_AUTOVSCROLL | ES_READONLY | ES_MULTILINE
+	EDITTEXT		IDC_RULE_HINT, 8, 26, 204, 104, WS_VSCROLL | WS_BORDER | NOT WS_TABSTOP | ES_AUTOVSCROLL | ES_READONLY | ES_MULTILINE
 
-	PUSHBUTTON		"", IDC_SAVE, 100, 148, 50, 14
-	PUSHBUTTON		"", IDC_CLOSE, 154, 148, 50, 14
+	PUSHBUTTON		"", IDC_SAVE, 108, 136, 50, 14
+	PUSHBUTTON		"", IDC_CLOSE, 162, 136, 50, 14
 END
 
 IDD_SETTINGS_GENERAL DIALOGEX 0, 0, 262, 172
@@ -527,7 +464,6 @@ BEGIN
 	IDS_FIND "Find"
 	IDS_FINDNEXT "Find next"
 	IDS_PURGE_UNUSED "Purge unused apps"
-	//IDS_PURGE_ERRORS "Purge invalid apps"
 	IDS_PURGE_TIMERS "Purge timers"
 	IDS_REFRESH "Refresh"
 	IDS_VIEW "View"
@@ -546,7 +482,6 @@ BEGIN
 	IDS_TRAY_SHOW "Show/Hide"
 	IDS_TRAY_START "Enable filters"
 	IDS_TRAY_STOP "Disable filters"
-	//IDS_TRAY_MODE "Mode"
 	IDS_TRAY_RULES "Rules"
 	IDS_TRAY_BLOCKLIST_RULES "Blocklist"
 	IDS_TRAY_SYSTEM_RULES "System rules"
@@ -555,21 +490,16 @@ BEGIN
 	IDS_TRAY_LOGERR "Errors log"
 
 	IDS_ADD_FILE "Add file"
-	//IDS_ADD_PROCESS "Add process"
-	//IDS_ADD_PACKAGE "Add package"
-	//IDS_ADD_SERVICE "Add service"
 	IDS_ANY "Any"
 	IDS_DISABLENOTIFICATIONS "Disable notifications"
 	IDS_OPENRULESEDITOR "Create rule"
 	IDS_TIMER "Timer"
-	//IDS_NOTIMER "No timer"
 	IDS_DISABLETIMER "Disable timer"
 	IDS_EXPLORE "Open containing folder"
 	IDS_COPY "Copy"
 	IDS_SELECT_ALL "Select all"
 	IDS_CHECK "Enable selected"
 	IDS_UNCHECK "Disable selected"
-	//IDS_PROPERTIES "Properties"
 
 	IDS_ADD "Add"
 	IDS_EDIT2 "Edit"
@@ -577,13 +507,6 @@ BEGIN
 	IDS_EXPORT "Export"
 	IDS_IMPORT "Import"
 
-	//IDS_MODE_WHITELIST "Whitelist (allow selected)"
-	//IDS_MODE_BLACKLIST "Blacklist (block selected)"
-
-	//IDS_RULE_ALLOWINBOUND "Allow inbound connections for all"
-	//IDS_RULE_ALLOWINBOUND_HINT "This filtering layer allows for authorizing accept requests for incoming TCP connections, as well as authorizing incoming non-TCP traffic based on the first packet received."
-	//IDS_RULE_ALLOWLISTEN "Allow listen connections for all"
-	//IDS_RULE_ALLOWLISTEN_HINT "This filtering layer allows for authorizing TCP listen requests.\r\nWarning: Disabling this option may cause 3rd party applications to freeze."
 	IDS_RULE_ALLOWLOOPBACK "Allow loopback connections for all"
 	IDS_RULE_ALLOWLOOPBACK_HINT "This allows all loopback traffic."
 
@@ -632,7 +555,6 @@ BEGIN
 
 	IDS_ACTION_ALLOW "Allow"
 	IDS_ACTION_BLOCK "Block"
-	//IDS_ACTION_LATER "Ignore"
 
 	IDS_DISABLE_CHK "Disable rule"
 	IDS_ENABLE_CHK "Enable rule"
@@ -650,8 +572,7 @@ BEGIN
 	IDS_TITLE_CONFIRMATIONS "Confirmations"
 	IDS_TITLE_INTERFACE "Interface"
 	IDS_TITLE_HIGHLIGHTING "Highlighting"
-	//IDS_TITLE_EXPERTS "Experts-only"
-	IDS_TITLE_LOGGING "Log to file"
+	IDS_TITLE_LOGGING "Logging"
 	IDS_TITLE_NOTIFICATIONS "Notifications"
 	IDS_TITLE_ADVANCED "Advanced"
 	IDS_TITLE_EXCLUDE "Exclude"
@@ -696,42 +617,30 @@ BEGIN
 	IDS_NOTIFICATIONSOUND_CHK "Enable notifications sound"
 	IDS_NOTIFICATIONDISPLAYTIMEOUT_HINT "Display timeout (sec.):"
 	IDS_NOTIFICATIONTIMEOUT_HINT "Timeout between similar notifications (sec.):"
-	IDS_EXCLUDESTEALTH_CHK "port scanner"
-	IDS_EXCLUDECLASSIFYALLOW_CHK "allowed packets"
+	IDS_EXCLUDESTEALTH_CHK "port scanner connections"
+	IDS_EXCLUDECLASSIFYALLOW_CHK "allowed connections"
 	IDS_EXCLUDEBLOCKLIST_CHK "blocklist"
 	IDS_EXCLUDECUSTOM_CHK "user rules"
 
-	//IDS_RULES_BLOCKLIST_HINT "Special rules to block spying and tracking on Windows."
-	//IDS_RULES_SYSTEM_HINT "Predefined rules for system services and protocols."
-	//IDS_RULES_USER_HINT "User rules. <a href=""%s"">Rules editor documentation</a>."
-
-	//IDS_NOTIFY_CREATERULE_ADDRESS "Create a rule for address ""%s"""
-	//IDS_NOTIFY_CREATERULE_PORT "Create a rule for port ""%d"""
-	//IDS_NOTIFY_DISABLENOTIFICATIONS "Disable notifications for this app"
 	IDS_NOTIFY_TOOLTIP "Set user rule to allow access to an address and/or port for this application."
 
 	IDS_QUESTION "Are you sure?"
 	IDS_QUESTION_DELETE "Delete %d item(s)?"
 	IDS_QUESTION_START "This will deny network access to apps as defined by the current configuration. Continue?"
 	IDS_QUESTION_STOP "This will restore network access for all apps that are currently blocked. Continue?"
-	//IDS_QUESTION_MODE "Change mode to a ""%s""?"
 	IDS_QUESTION_EXIT "Installed filters will continue to work even if you exit. Continue?"
-	//IDS_QUESTION_EXPERT "This option is for advanced users only. Continue?"
 	IDS_QUESTION_TIMER "Timer(s) activated. Timers will only work when the application is running. Exit?"
 	IDS_QUESTION_TIMERS "Delete all timers?"
 	IDS_QUESTION_RESET "Are you sure you want to reset all application settings?"
 	IDS_QUESTION_FLAG_CHK "Do not ask again"
 
 	IDS_STATUS_TOTAL "Total apps: %d"
-	//IDS_STATUS_SELECTED "%d selected"
 
 	IDS_STATUS_UNUSED_APPS "Unused apps"
-	//IDS_STATUS_INVALID_APPS "Invalid apps"
 	IDS_STATUS_TIMER_APPS "Apps with timer"
 
 	IDS_STATUS_EMPTY "<empty>"
 
-	//IDS_STATUS_ERROR "Error occured! Click here for more details or open the log file."
 	IDS_STATUS_SYNTAX_ERROR "Syntax error in rule!"
 	IDS_STATUS_TIMER_DONE "Timer for ""%s"" has expired!"
 

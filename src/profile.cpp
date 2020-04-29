@@ -3,42 +3,55 @@
 
 #include "global.hpp"
 
-bool _app_getappinfo (size_t app_hash, EnumInfo info_key, LPVOID presult, size_t size)
+LONG_PTR _app_getappinfo (size_t app_hash, EnumInfo info_key)
 {
-	if (!app_hash || !presult)
-		return false;
-
 	PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
 
 	if (!ptr_app_object)
-		return false;
+		return 0;
 
 	PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+	LONG_PTR result = 0;
 
 	if (ptr_app)
 	{
-		if (info_key == InfoTimestamp)
+		if (info_key == InfoName)
 		{
-			RtlCopyMemory (presult, &ptr_app->timestamp, size);
+			if (!_r_str_isempty (ptr_app->display_name))
+				result = (LONG_PTR)ptr_app->display_name;
+
+			else if (!_r_str_isempty (ptr_app->original_path))
+				result = (LONG_PTR)ptr_app->original_path;
+		}
+		else if (info_key == InfoTimestamp)
+		{
+			result = ptr_app->timestamp;
+		}
+		else if (info_key == InfoTimer)
+		{
+			result = ptr_app->timer;
 		}
 		else if (info_key == InfoIconId)
 		{
-			RtlCopyMemory (presult, &ptr_app->icon_id, size);
-		}
-		else if (info_key == InfoSilent)
-		{
-			RtlCopyMemory (presult, &ptr_app->is_silent, size);
+			result = ptr_app->icon_id;
 		}
 		else if (info_key == InfoListviewId)
 		{
-			INT v = _app_getlistview_id (ptr_app->type);
-			RtlCopyMemory (presult, &v, size);
+			result = _app_getlistview_id (ptr_app->type);
+		}
+		else if (info_key == InfoIsSilent)
+		{
+			result = ptr_app->is_silent ? TRUE : FALSE;
+		}
+		else if (info_key == InfoIsUndeletable)
+		{
+			result = ptr_app->is_undeletable ? TRUE : FALSE;
 		}
 	}
 
 	_r_obj_dereference (ptr_app_object);
 
-	return true;
+	return result;
 }
 
 bool _app_setappinfo (size_t app_hash, EnumInfo info_key, LONG_PTR info_value)
@@ -52,7 +65,7 @@ bool _app_setappinfo (size_t app_hash, EnumInfo info_key, LONG_PTR info_value)
 
 	if (ptr_app)
 	{
-		if (info_key == InfoUndeletable)
+		if (info_key == InfoIsUndeletable)
 		{
 			ptr_app->is_undeletable = info_value ? true : false;
 		}
@@ -84,7 +97,6 @@ size_t _app_addapplication (HWND hwnd, LPCWSTR path, time_t timestamp, time_t ti
 		return app_hash; // already exists
 
 	PITEM_APP ptr_app = new ITEM_APP;
-	RtlSecureZeroMemory (ptr_app, sizeof (ITEM_APP));
 
 	const bool is_ntoskrnl = (app_hash == config.ntoskrnl_hash);
 
@@ -177,12 +189,10 @@ size_t _app_addapplication (HWND hwnd, LPCWSTR path, time_t timestamp, time_t ti
 
 		if (listview_id)
 		{
-			const INT item = _r_listview_getitemcount (hwnd, listview_id);
-
 			_r_fastlock_acquireshared (&lock_checkbox);
 
-			_r_listview_additem (hwnd, listview_id, item, 0, ptr_app->display_name, ptr_app->icon_id, _app_getappgroup (app_hash, ptr_app), app_hash);
-			_app_setappiteminfo (hwnd, listview_id, item, app_hash, ptr_app);
+			_r_listview_additem (hwnd, listview_id, 0, 0, ptr_app->display_name, ptr_app->icon_id, _app_getappgroup (app_hash, ptr_app), app_hash);
+			_app_setappiteminfo (hwnd, listview_id, 0, app_hash, ptr_app);
 
 			_r_fastlock_releaseshared (&lock_checkbox);
 		}
@@ -193,18 +203,18 @@ size_t _app_addapplication (HWND hwnd, LPCWSTR path, time_t timestamp, time_t ti
 
 PR_OBJECT _app_getappitem (size_t app_hash)
 {
-	if (!app_hash || !_app_isappfound (app_hash))
-		return nullptr;
+	if (_app_isappfound (app_hash))
+		return _r_obj_reference (apps[app_hash]);
 
-	return _r_obj_reference (apps[app_hash]);
+	return nullptr;
 }
 
 PR_OBJECT _app_getrulebyid (size_t idx)
 {
-	if (idx == INVALID_SIZE_T || idx >= rules_arr.size ())
-		return nullptr;
+	if (idx != INVALID_SIZE_T && idx < rules_arr.size ())
+		return _r_obj_reference (rules_arr.at (idx));
 
-	return _r_obj_reference (rules_arr.at (idx));
+	return nullptr;
 }
 
 PR_OBJECT _app_getrulebyhash (size_t rule_hash)
@@ -265,6 +275,32 @@ size_t _app_getnetworkapp (size_t network_hash)
 	_r_obj_dereference (ptr_network_object);
 
 	return 0;
+}
+
+PR_OBJECT _app_getlogitem (size_t idx)
+{
+	if (idx != INVALID_SIZE_T && idx < log_arr.size ())
+		return _r_obj_reference (log_arr.at (idx));
+
+	return nullptr;
+}
+
+size_t _app_getlogapp (size_t idx)
+{
+	PR_OBJECT ptr_log_object = _app_getlogitem (idx);
+
+	if (!ptr_log_object)
+		return 0;
+
+	PITEM_LOG ptr_log = (PITEM_LOG)ptr_log_object->pdata;
+	size_t app_hash;
+
+	if (ptr_log)
+		app_hash = ptr_log->app_hash;
+
+	_r_obj_dereference (ptr_log_object);
+
+	return app_hash;
 }
 
 COLORREF _app_getappcolor (INT listview_id, size_t app_hash)
@@ -434,12 +470,6 @@ void _app_getcount (PITEM_STATUS ptr_status)
 
 INT _app_getappgroup (size_t app_hash, const PITEM_APP ptr_app)
 {
-	//	if(!app.ConfigGet (L"IsEnableGroups", false).AsBool ())
-	//		return I_GROUPIDNONE;
-
-	if (!ptr_app)
-		return 2;
-
 	// apps with special rule
 	if (app.ConfigGet (L"IsEnableSpecialGroup", true).AsBool () && _app_isapphaverule (app_hash))
 		return 1;
@@ -449,9 +479,6 @@ INT _app_getappgroup (size_t app_hash, const PITEM_APP ptr_app)
 
 INT _app_getrulegroup (const PITEM_RULE ptr_rule)
 {
-	//	if(!app.ConfigGet (L"IsEnableGroups", false).AsBool ())
-	//		return I_GROUPIDNONE;
-
 	if (!ptr_rule || !ptr_rule->is_enabled)
 		return 2;
 
@@ -463,20 +490,17 @@ INT _app_getrulegroup (const PITEM_RULE ptr_rule)
 
 INT _app_getruleicon (const PITEM_RULE ptr_rule)
 {
-	if (!ptr_rule)
-		return I_IMAGENONE;
-
 	return ptr_rule->is_block ? 1 : 0;
 }
 
 COLORREF _app_getrulecolor (INT listview_id, size_t rule_idx)
 {
-	rstring color_value;
-
 	PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
 
 	if (!ptr_rule_object)
 		return 0;
+
+	rstring color_value;
 
 	PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
 
@@ -497,11 +521,11 @@ COLORREF _app_getrulecolor (INT listview_id, size_t rule_idx)
 	return _app_getcolorvalue (_r_str_hash (color_value));
 }
 
-rstring _app_gettooltip (HWND hwnd, INT listview_id, size_t lparam)
+rstring _app_gettooltip (HWND hwnd, INT listview_id, LPARAM lparam)
 {
 	rstring result;
 
-	if ((listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP) || listview_id == IDC_RULE_APPS_ID || listview_id == IDC_NETWORK)
+	if ((listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP) || listview_id == IDC_RULE_APPS_ID || listview_id == IDC_NETWORK || listview_id == IDC_LOG)
 	{
 		if (listview_id == IDC_NETWORK)
 		{
@@ -527,6 +551,31 @@ rstring _app_gettooltip (HWND hwnd, INT listview_id, size_t lparam)
 				}
 
 				_r_obj_dereference (ptr_network_object);
+			}
+		}
+		else if (listview_id == IDC_LOG)
+		{
+			PR_OBJECT ptr_log_object = _app_getlogitem (lparam);
+
+			if (ptr_log_object)
+			{
+				PITEM_LOG ptr_log = (PITEM_LOG)ptr_log_object->pdata;
+
+				if (ptr_log)
+				{
+					if (!_app_isappfound (ptr_log->app_hash))
+					{
+						result = ptr_log->path;
+
+						_r_obj_dereference (ptr_log_object);
+
+						return result;
+					}
+
+					lparam = ptr_log->app_hash;
+				}
+
+				_r_obj_dereference (ptr_log_object);
 			}
 		}
 
@@ -768,9 +817,6 @@ void _app_setruleiteminfo (HWND hwnd, INT listview_id, INT item, PITEM_RULE ptr_
 
 void _app_ruleenable (PITEM_RULE ptr_rule, bool is_enable)
 {
-	if (!ptr_rule)
-		return;
-
 	ptr_rule->is_enabled = is_enable;
 
 	if (ptr_rule->is_readonly && !_r_str_isempty (ptr_rule->pname))
@@ -795,7 +841,6 @@ void _app_ruleenable (PITEM_RULE ptr_rule, bool is_enable)
 				else
 				{
 					PITEM_RULE_CONFIG ptr_config = new ITEM_RULE_CONFIG;
-					RtlSecureZeroMemory (ptr_config, sizeof (ITEM_RULE_CONFIG));
 
 					ptr_config->is_enabled = is_enable;
 					_r_str_alloc (&ptr_config->pname, _r_str_length (ptr_rule->pname), ptr_rule->pname);
@@ -806,7 +851,6 @@ void _app_ruleenable (PITEM_RULE ptr_rule, bool is_enable)
 			else
 			{
 				PITEM_RULE_CONFIG ptr_config = new ITEM_RULE_CONFIG;
-				RtlSecureZeroMemory (ptr_config, sizeof (ITEM_RULE_CONFIG));
 
 				ptr_config->is_enabled = is_enable;
 				_r_str_alloc (&ptr_config->pname, _r_str_length (ptr_rule->pname), ptr_rule->pname);
@@ -819,9 +863,6 @@ void _app_ruleenable (PITEM_RULE ptr_rule, bool is_enable)
 
 void _app_ruleenable2 (PITEM_RULE ptr_rule, bool is_enable)
 {
-	if (!ptr_rule)
-		return;
-
 	ptr_rule->is_enabled = is_enable;
 
 	if (ptr_rule->is_readonly && !_r_str_isempty (ptr_rule->pname))
@@ -894,11 +935,15 @@ void _app_ruleblocklistset (HWND hwnd, INT spy_state, INT update_state, INT extr
 	OBJECTS_VEC rules;
 
 	const INT listview_id = _app_getlistview_id (DataRuleBlocklist);
-	size_t changes_count = 0;
 
-	for (size_t i = 0; i < rules_arr.size (); i++)
+	size_t changes_count = 0;
+	INT index = -1; // negative initial value is required for correct array indexing
+
+	for (auto &p : rules_arr)
 	{
-		PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+		index += 1;
+
+		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
 			continue;
@@ -922,7 +967,7 @@ void _app_ruleblocklistset (HWND hwnd, INT spy_state, INT update_state, INT extr
 
 		if (hwnd)
 		{
-			const INT item_pos = _app_getposition (hwnd, listview_id, i);
+			const INT item_pos = _app_getposition (hwnd, listview_id, index);
 
 			if (item_pos != INVALID_INT)
 			{
@@ -1291,7 +1336,7 @@ void _app_profile_load_fallback ()
 	if (!_app_isappfound (config.my_hash))
 		_app_addapplication (nullptr, app.GetBinaryPath (), 0, 0, 0, false, true);
 
-	_app_setappinfo (config.my_hash, InfoUndeletable, TRUE);
+	_app_setappinfo (config.my_hash, InfoIsUndeletable, TRUE);
 
 	// disable deletion for this shit ;)
 	if (!app.ConfigGet (L"IsInternalRulesDisabled", false).AsBool ())
@@ -1302,8 +1347,8 @@ void _app_profile_load_fallback ()
 		if (!_app_isappfound (config.svchost_hash))
 			_app_addapplication (nullptr, _r_path_expand (PATH_SVCHOST), 0, 0, 0, false, false);
 
-		_app_setappinfo (config.ntoskrnl_hash, InfoUndeletable, TRUE);
-		_app_setappinfo (config.svchost_hash, InfoUndeletable, TRUE);
+		_app_setappinfo (config.ntoskrnl_hash, InfoIsUndeletable, TRUE);
+		_app_setappinfo (config.svchost_hash, InfoIsUndeletable, TRUE);
 	}
 
 }
@@ -1428,18 +1473,10 @@ void _app_profile_load_helper (const pugi::xml_node& root, EnumDataType type, UI
 								continue;
 
 							if (!_app_isappfound (app_hash))
-							{
-								_r_fastlock_acquireshared (&lock_access);
 								app_hash = _app_addapplication (nullptr, app_path, 0, 0, 0, false, false);
-								_r_fastlock_releaseshared (&lock_access);
-							}
 
 							if (ptr_rule->type == DataRuleSystem)
-							{
-								_r_fastlock_acquireshared (&lock_access);
-								_app_setappinfo (app_hash, InfoUndeletable, TRUE);
-								_r_fastlock_releaseshared (&lock_access);
-							}
+								_app_setappinfo (app_hash, InfoIsUndeletable, TRUE);
 
 							ptr_rule->apps[app_hash] = true;
 						}
@@ -1447,9 +1484,7 @@ void _app_profile_load_helper (const pugi::xml_node& root, EnumDataType type, UI
 				}
 			}
 
-			_r_fastlock_acquireshared (&lock_access);
 			rules_arr.push_back (_r_obj_allocate (ptr_rule, &_app_dereferencerule));
-			_r_fastlock_releaseshared (&lock_access);
 		}
 		else if (type == DataRulesConfig)
 		{
@@ -1458,16 +1493,11 @@ void _app_profile_load_helper (const pugi::xml_node& root, EnumDataType type, UI
 			if (rule_name.IsEmpty ())
 				continue;
 
-			// do not load blocklist config (old versions hack)!
-			//if (_app_isruleblocklist (rule_name))
-			//	continue;
-
 			const size_t rule_hash = _r_str_hash (rule_name);
 
 			if (rule_hash && rules_config.find (rule_hash) == rules_config.end ())
 			{
 				PITEM_RULE_CONFIG ptr_config = new ITEM_RULE_CONFIG;
-				RtlSecureZeroMemory (ptr_config, sizeof (ITEM_RULE_CONFIG));
 
 				ptr_config->is_enabled = item.attribute (L"is_enabled").as_bool ();
 
@@ -1639,96 +1669,6 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 			}
 		}
 	}
-	else
-	{
-		// load apps (old!)
-		{
-			pugi::xml_document doc_apps;
-			pugi::xml_parse_result result_apps = doc_apps.load_file (config.apps_path, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-
-			// load backup
-			if (!result_apps)
-				result_apps = doc_apps.load_file (config.apps_path_backup, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-
-			if (result_apps)
-			{
-				pugi::xml_node root = doc_apps.child (L"root");
-
-				if (root)
-				{
-					if (_app_profile_load_check_node (root, XmlApps, false))
-						_app_profile_load_helper (root, DataAppRegular, 0);
-				}
-
-				// made old config backup!
-				if (_r_fs_exists (config.apps_path))
-					_r_fs_move (config.apps_path, config.apps_path_backup, MOVEFILE_REPLACE_EXISTING);
-			}
-
-			_r_fastlock_acquireshared (&lock_access);
-			_app_profile_load_fallback ();
-			_r_fastlock_releaseshared (&lock_access);
-		}
-
-		// load rules config (old!)
-		{
-			pugi::xml_document doc_rules_config;
-			pugi::xml_parse_result result_rules_config = doc_rules_config.load_file (config.rules_config_path, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-
-			// load backup
-			if (!result_rules_config)
-				result_rules_config = doc_rules_config.load_file (config.rules_config_path_backup, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-
-			if (result_rules_config)
-			{
-				pugi::xml_node root = doc_rules_config.child (L"root");
-
-				if (root)
-				{
-					if (_app_profile_load_check_node (root, XmlRulesConfig, false))
-						_app_profile_load_helper (root, DataRulesConfig, 0);
-				}
-
-				// made old config backup!
-				if (_r_fs_exists (config.rules_config_path))
-					_r_fs_move (config.rules_config_path, config.rules_config_path_backup, MOVEFILE_REPLACE_EXISTING);
-			}
-		}
-
-		// load internal rules (new!)
-		if (!app.ConfigGet (L"IsInternalRulesDisabled", false).AsBool ())
-			_app_profile_load_internal (config.profile_internal_path, MAKEINTRESOURCE (IDR_PROFILE_INTERNAL), &config.profile_internal_timestamp);
-
-		// load rules custom (old!)
-		{
-			pugi::xml_document doc_rules_custom;
-			pugi::xml_parse_result result_rules_custom = doc_rules_custom.load_file (config.rules_custom_path, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-
-			// load backup
-			if (!result_rules_custom)
-			{
-				if (_r_fs_exists (config.rules_custom_path_backup))
-					result_rules_custom = doc_rules_custom.load_file (config.rules_custom_path_backup, PUGIXML_LOAD_FLAGS, PUGIXML_LOAD_ENCODING);
-			}
-
-			if (result_rules_custom)
-			{
-				pugi::xml_node root = doc_rules_custom.child (L"root");
-
-				if (root)
-				{
-					if (_app_profile_load_check_node (root, XmlRules, false))
-						_app_profile_load_helper (root, DataRuleCustom, 0);
-				}
-
-				// made old config backup!
-				if (_r_fs_exists (config.rules_custom_path))
-					_r_fs_move (config.rules_custom_path, config.rules_custom_path_backup, MOVEFILE_REPLACE_EXISTING);
-			}
-		}
-
-		_app_profile_save (); // required!
-	}
 
 	if (hwnd)
 	{
@@ -1753,12 +1693,10 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 
 				if (listview_id)
 				{
-					const INT item = _r_listview_getitemcount (hwnd, listview_id);
-
 					_r_fastlock_acquireshared (&lock_checkbox);
 
-					_r_listview_additem (hwnd, listview_id, item, 0, ptr_app->display_name, ptr_app->icon_id, _app_getappgroup (app_hash, ptr_app), app_hash);
-					_app_setappiteminfo (hwnd, listview_id, item, app_hash, ptr_app);
+					_r_listview_additem (hwnd, listview_id, 0, 0, ptr_app->display_name, ptr_app->icon_id, _app_getappgroup (app_hash, ptr_app), app_hash);
+					_app_setappiteminfo (hwnd, listview_id, 0, app_hash, ptr_app);
 
 					_r_fastlock_releaseshared (&lock_checkbox);
 				}
@@ -1803,12 +1741,10 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 
 				if (listview_id)
 				{
-					const INT item = _r_listview_getitemcount (hwnd, listview_id);
-
 					_r_fastlock_acquireshared (&lock_checkbox);
 
-					_r_listview_additem (hwnd, listview_id, item, 0, ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), i);
-					_app_setruleiteminfo (hwnd, listview_id, item, ptr_rule, false);
+					_r_listview_additem (hwnd, listview_id, 0, 0, ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), i);
+					_app_setruleiteminfo (hwnd, listview_id, 0, ptr_rule, false);
 
 					_r_fastlock_releaseshared (&lock_checkbox);
 				}
