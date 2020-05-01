@@ -191,7 +191,7 @@ void _app_freethreadpool (THREADS_VEC* ptr_pool)
 
 	for (size_t i = (count - 1); i != INVALID_SIZE_T; i--)
 	{
-		HANDLE& hthread = ptr_pool->at (i);
+		HANDLE hthread = ptr_pool->at (i);
 
 		if (_r_fs_isvalidhandle (hthread))
 		{
@@ -262,7 +262,7 @@ void _app_getappicon (const PITEM_APP ptr_app, bool is_small, PINT picon_id, HIC
 	}
 }
 
-void _app_getdisplayname (size_t app_hash, ITEM_APP* ptr_app, LPWSTR* extracted_name)
+void _app_getdisplayname (size_t app_hash, PITEM_APP ptr_app, LPWSTR* extracted_name)
 {
 	if (!extracted_name)
 		return;
@@ -1523,7 +1523,7 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 
 	if (tableSize)
 	{
-		PMIB_TCPTABLE_OWNER_MODULE tcp4Table = (PMIB_TCPTABLE_OWNER_MODULE)_r_mem_allocex (tableSize, 0);
+		PMIB_TCPTABLE_OWNER_MODULE tcp4Table = (PMIB_TCPTABLE_OWNER_MODULE)_r_mem_allocex (tableSize, HEAP_ZERO_MEMORY);
 
 		if (tcp4Table)
 		{
@@ -1585,7 +1585,7 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 
 	if (tableSize)
 	{
-		PMIB_TCP6TABLE_OWNER_MODULE tcp6Table = (PMIB_TCP6TABLE_OWNER_MODULE)_r_mem_allocex (tableSize, 0);
+		PMIB_TCP6TABLE_OWNER_MODULE tcp6Table = (PMIB_TCP6TABLE_OWNER_MODULE)_r_mem_allocex (tableSize, HEAP_ZERO_MEMORY);
 
 		if (tcp6Table)
 		{
@@ -1641,7 +1641,7 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 
 	if (tableSize)
 	{
-		PMIB_UDPTABLE_OWNER_MODULE udp4Table = (PMIB_UDPTABLE_OWNER_MODULE)_r_mem_allocex (tableSize, 0);
+		PMIB_UDPTABLE_OWNER_MODULE udp4Table = (PMIB_UDPTABLE_OWNER_MODULE)_r_mem_allocex (tableSize, HEAP_ZERO_MEMORY);
 
 		if (udp4Table)
 		{
@@ -1693,7 +1693,7 @@ void _app_generate_connections (OBJECTS_MAP& ptr_map, HASHER_MAP& checker_map)
 
 	if (tableSize)
 	{
-		PMIB_UDP6TABLE_OWNER_MODULE udp6Table = (PMIB_UDP6TABLE_OWNER_MODULE)_r_mem_allocex (tableSize, 0);
+		PMIB_UDP6TABLE_OWNER_MODULE udp6Table = (PMIB_UDP6TABLE_OWNER_MODULE)_r_mem_allocex (tableSize, HEAP_ZERO_MEMORY);
 
 		if (udp6Table)
 		{
@@ -1871,7 +1871,7 @@ void _app_generate_services ()
 		dwServiceType |= SERVICE_INTERACTIVE_PROCESS | SERVICE_USER_SERVICE | SERVICE_USERSERVICE_INSTANCE;
 
 	DWORD bufferSize = initialBufferSize;
-	LPVOID pBuffer = _r_mem_allocex (bufferSize, 0);
+	LPVOID pBuffer = _r_mem_allocex (bufferSize, HEAP_ZERO_MEMORY);
 
 	if (!pBuffer)
 		return;
@@ -1882,7 +1882,7 @@ void _app_generate_services ()
 		{
 			// Set the buffer
 			bufferSize += returnLength;
-			pBuffer = _r_mem_reallocex (pBuffer, bufferSize, 0);
+			pBuffer = _r_mem_reallocex (pBuffer, bufferSize, HEAP_ZERO_MEMORY);
 
 			if (pBuffer)
 			{
@@ -1980,7 +1980,7 @@ void _app_generate_services ()
 
 			if (RtlCreateServiceSid (&serviceNameUs, serviceSid, &serviceSidLength) == STATUS_BUFFER_TOO_SMALL)
 			{
-				serviceSid = (LPBYTE)_r_mem_allocex (serviceSidLength, 0);
+				serviceSid = (LPBYTE)_r_mem_allocex (serviceSidLength, HEAP_ZERO_MEMORY);
 
 				if (serviceSid)
 				{
@@ -2210,122 +2210,6 @@ bool _app_item_get (EnumDataType type, size_t app_hash, rstring* display_name, r
 	}
 
 	return false;
-}
-
-void _app_refreshstatus (HWND hwnd, INT listview_id)
-{
-	PITEM_STATUS pstatus = (PITEM_STATUS)_r_mem_allocex (sizeof (ITEM_STATUS), HEAP_ZERO_MEMORY);
-
-	if (pstatus)
-		_app_getcount (pstatus);
-
-	const HWND hstatus = GetDlgItem (hwnd, IDC_STATUSBAR);
-	const HDC hdc = GetDC (hstatus);
-
-	// item count
-	if (hdc)
-	{
-		SelectObject (hdc, (HFONT)SendMessage (hstatus, WM_GETFONT, 0, 0)); // fix
-
-		const INT parts_count = 3;
-		const INT spacing = _r_dc_getdpi (hwnd, 12);
-
-		rstring text[parts_count];
-		INT parts[parts_count] = {0};
-		LONG size[parts_count] = {0};
-		LONG lay = 0;
-
-		for (INT i = 0; i < parts_count; i++)
-		{
-			switch (i)
-			{
-				case 1:
-				{
-					if (pstatus)
-						text[i].Format (L"%s: %" PR_SIZE_T, app.LocaleString (IDS_STATUS_UNUSED_APPS, nullptr).GetString (), pstatus->apps_unused_count);
-
-					break;
-				}
-
-				case 2:
-				{
-					if (pstatus)
-						text[i].Format (L"%s: %" PR_SIZE_T, app.LocaleString (IDS_STATUS_TIMER_APPS, nullptr).GetString (), pstatus->apps_timer_count);
-
-					break;
-				}
-			}
-
-			if (i)
-			{
-				size[i] = _r_dc_fontwidth (hdc, text[i], text[i].GetLength ()) + spacing;
-				lay += size[i];
-			}
-		}
-
-		RECT rc_client = {0};
-		GetClientRect (hstatus, &rc_client);
-
-		parts[0] = _R_RECT_WIDTH (&rc_client) - lay - _r_dc_getsystemmetrics (hwnd, SM_CXVSCROLL) - (_r_dc_getsystemmetrics (hwnd, SM_CXBORDER) * 2);
-		parts[1] = parts[0] + size[1];
-		parts[2] = parts[1] + size[2];
-
-		SendMessage (hstatus, SB_SETPARTS, parts_count, (LPARAM)parts);
-
-		for (INT i = 1; i < parts_count; i++)
-			_r_status_settext (hwnd, IDC_STATUSBAR, i, text[i]);
-
-		ReleaseDC (hstatus, hdc);
-	}
-
-	// group information
-	if (listview_id)
-	{
-		if (listview_id == INVALID_INT)
-			listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
-
-		if ((SendDlgItemMessage (hwnd, listview_id, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_CHECKBOXES) != 0)
-		{
-			const bool is_rules_lv = (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM);
-
-			const UINT enabled_group_title = is_rules_lv ? IDS_GROUP_ENABLED : IDS_GROUP_ALLOWED;
-			const UINT special_group_title = is_rules_lv ? IDS_GROUP_SPECIAL : IDS_GROUP_SPECIAL_APPS;
-			const UINT disabled_group_title = is_rules_lv ? IDS_GROUP_DISABLED : IDS_GROUP_BLOCKED;
-
-			const INT total_count = _r_listview_getitemcount (hwnd, listview_id);
-
-			INT group1_count = 0;
-			INT group2_count = 0;
-			INT group3_count = 0;
-
-			for (INT i = 0; i < total_count; i++)
-			{
-				LVITEM lvi = {0};
-
-				lvi.mask = LVIF_GROUPID;
-				lvi.iItem = i;
-
-				if (SendDlgItemMessage (hwnd, listview_id, LVM_GETITEM, 0, (LPARAM)&lvi))
-				{
-					if (lvi.iGroupId == 0)
-						group1_count += 1;
-
-					else if (lvi.iGroupId == 1)
-						group2_count += 1;
-
-					else
-						group3_count += 1;
-				}
-			}
-
-			_r_listview_setgroup (hwnd, listview_id, 0, app.LocaleString (enabled_group_title, total_count ? _r_fmt (L" (%d/%d)", group1_count, total_count).GetString () : nullptr), 0, 0);
-			_r_listview_setgroup (hwnd, listview_id, 1, app.LocaleString (special_group_title, total_count ? _r_fmt (L" (%d/%d)", group2_count, total_count).GetString () : nullptr), 0, 0);
-			_r_listview_setgroup (hwnd, listview_id, 2, app.LocaleString (disabled_group_title, total_count ? _r_fmt (L" (%d/%d)", group3_count, total_count).GetString () : nullptr), 0, 0);
-		}
-	}
-
-	if (pstatus)
-		_r_mem_free (pstatus);
 }
 
 rstring _app_parsehostaddress_dns (LPCWSTR hostname, USHORT port)
@@ -2806,9 +2690,9 @@ bool _app_parserulestring (rstring rule, PITEM_ADDRESS ptr_addr)
 	return true;
 }
 
-bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR * pbuffer)
+bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR* pbuffer)
 {
-	if (!pbuffer || (af != AF_INET && af != AF_INET6))
+	if (af != AF_INET && af != AF_INET6)
 		return false;
 
 	bool result = false;
@@ -2818,7 +2702,6 @@ bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR * pbuffer)
 	if (_app_formataddress (af, 0, paddr, 0, &pstraddr, FMTADDR_AS_ARPA))
 	{
 		const size_t arpa_hash = _r_str_hash (pstraddr);
-
 		const bool is_exists = cache_arpa.find (arpa_hash) != cache_arpa.end ();
 
 		if (is_exists)
@@ -2845,7 +2728,6 @@ bool _app_resolveaddress (ADDRESS_FAMILY af, LPVOID paddr, LPWSTR * pbuffer)
 				if (ppQueryResultsSet)
 				{
 					const size_t len = _r_str_length (ppQueryResultsSet->Data.PTR.pNameHost);
-
 					result = _r_str_alloc (pbuffer, len, ppQueryResultsSet->Data.PTR.pNameHost);
 
 					if (result)

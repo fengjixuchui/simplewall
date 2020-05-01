@@ -15,7 +15,12 @@ LONG_PTR _app_getappinfo (size_t app_hash, EnumInfo info_key)
 
 	if (ptr_app)
 	{
-		if (info_key == InfoName)
+		if (info_key == InfoPath)
+		{
+			if (!_r_str_isempty (ptr_app->real_path))
+				result = (LONG_PTR)ptr_app->real_path;
+		}
+		else if (info_key == InfoName)
 		{
 			if (!_r_str_isempty (ptr_app->display_name))
 				result = (LONG_PTR)ptr_app->display_name;
@@ -312,8 +317,9 @@ COLORREF _app_getappcolor (INT listview_id, size_t app_hash)
 	if (!ptr_app_object)
 		return 0;
 
-	const bool is_appslist = (listview_id == IDC_RULE_APPS_ID);
-	const bool is_networkslist = (listview_id == IDC_NETWORK);
+	const bool is_profilelist = (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_RULES_CUSTOM);
+	const bool is_networklist = (listview_id == IDC_NETWORK) || (listview_id == IDC_LOG);
+	const bool is_editorlist = (listview_id == IDC_RULE_APPS_ID);
 
 	PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
 
@@ -325,22 +331,22 @@ COLORREF _app_getappcolor (INT listview_id, size_t app_hash)
 		else if (app.ConfigGet (L"IsHighlightTimer", true, L"colors").AsBool () && _app_istimeractive (ptr_app))
 			color_value = L"ColorTimer";
 
-		else if (!is_networkslist && !ptr_app->is_silent && app.ConfigGet (L"IsHighlightConnection", true, L"colors").AsBool () && _app_isapphaveconnection (app_hash))
+		else if (!is_networklist && !ptr_app->is_silent && app.ConfigGet (L"IsHighlightConnection", true, L"colors").AsBool () && _app_isapphaveconnection (app_hash))
 			color_value = L"ColorConnection";
 
 		else if (app.ConfigGet (L"IsHighlightSigned", true, L"colors").AsBool () && !ptr_app->is_silent && app.ConfigGet (L"IsCertificatesEnabled", false).AsBool () && ptr_app->is_signed)
 			color_value = L"ColorSigned";
 
-		else if ((is_appslist || is_networkslist || !app.ConfigGet (L"IsEnableSpecialGroup", true).AsBool ()) && (app.ConfigGet (L"IsHighlightSpecial", true, L"colors").AsBool () && _app_isapphaverule (app_hash)))
+		else if ((!is_profilelist || !app.ConfigGet (L"IsEnableSpecialGroup", true).AsBool ()) && (app.ConfigGet (L"IsHighlightSpecial", true, L"colors").AsBool () && _app_isapphaverule (app_hash)))
 			color_value = L"ColorSpecial";
 
-		else if (!is_networkslist && app.ConfigGet (L"IsHighlightSilent", true, L"colors").AsBool () && ptr_app->is_silent)
+		else if (is_profilelist && app.ConfigGet (L"IsHighlightSilent", true, L"colors").AsBool () && ptr_app->is_silent)
 			color_value = L"ColorSilent";
 
-		else if ((is_appslist || is_networkslist) && app.ConfigGet (L"IsHighlightService", true, L"colors").AsBool () && ptr_app->type == DataAppService)
+		else if (!is_profilelist && !is_editorlist && app.ConfigGet (L"IsHighlightService", true, L"colors").AsBool () && ptr_app->type == DataAppService)
 			color_value = L"ColorService";
 
-		else if ((is_appslist || is_networkslist) && app.ConfigGet (L"IsHighlightPackage", true, L"colors").AsBool () && ptr_app->type == DataAppUWP)
+		else if (!is_profilelist && !is_editorlist && app.ConfigGet (L"IsHighlightPackage", true, L"colors").AsBool () && ptr_app->type == DataAppUWP)
 			color_value = L"ColorPackage";
 
 		else if (app.ConfigGet (L"IsHighlightPico", true, L"colors").AsBool () && ptr_app->type == DataAppPico)
@@ -363,9 +369,12 @@ void _app_freeapplication (size_t app_hash)
 	if (!app_hash)
 		return;
 
-	for (size_t i = 0; i < rules_arr.size (); i++)
+	INT index = INVALID_INT;
+
+	for (auto &p : rules_arr)
 	{
-		PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+		index += 1;
+		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
 			continue;
@@ -390,7 +399,7 @@ void _app_freeapplication (size_t app_hash)
 
 					if (rule_listview_id)
 					{
-						const INT item_pos = _app_getposition (app.GetHWND (), rule_listview_id, i);
+						const INT item_pos = _app_getposition (app.GetHWND (), rule_listview_id, index);
 
 						if (item_pos != INVALID_INT)
 						{
@@ -479,7 +488,7 @@ INT _app_getappgroup (size_t app_hash, const PITEM_APP ptr_app)
 
 INT _app_getrulegroup (const PITEM_RULE ptr_rule)
 {
-	if (!ptr_rule || !ptr_rule->is_enabled)
+	if (!ptr_rule->is_enabled)
 		return 2;
 
 	//if (app.ConfigGet (L"IsEnableSpecialGroup", true).AsBool () && (ptr_rule->is_forservices || !ptr_rule->apps.empty ()))
@@ -527,6 +536,9 @@ rstring _app_gettooltip (HWND hwnd, INT listview_id, LPARAM lparam)
 
 	if ((listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP) || listview_id == IDC_RULE_APPS_ID || listview_id == IDC_NETWORK || listview_id == IDC_LOG)
 	{
+		const bool is_profilelist = (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_RULES_CUSTOM);
+		const bool is_networklist = (listview_id == IDC_NETWORK) || (listview_id == IDC_LOG);
+
 		if (listview_id == IDC_NETWORK)
 		{
 			PR_OBJECT ptr_network_object = _app_getnetworkitem (lparam);
@@ -669,20 +681,20 @@ rstring _app_gettooltip (HWND hwnd, INT listview_id, LPARAM lparam)
 					else if (ptr_app->type == DataAppPico)
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_PICO, nullptr).GetString ());
 
-					else if (ptr_app->type == DataAppService && listview_id != IDC_APPS_SERVICE)
+					else if (!is_profilelist && ptr_app->type == DataAppService)
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_SERVICE, nullptr).GetString ());
 
-					else if (ptr_app->type == DataAppUWP && listview_id != IDC_APPS_UWP)
+					else if (!is_profilelist && ptr_app->type == DataAppUWP)
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_PACKAGE, nullptr).GetString ());
 
 					// app settings
 					if (ptr_app->is_system)
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_SYSTEM, nullptr).GetString ());
 
-					if (listview_id != IDC_NETWORK && _app_isapphaveconnection (lparam))
+					if (!is_networklist && _app_isapphaveconnection (lparam))
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_CONNECTION, nullptr).GetString ());
 
-					if (ptr_app->is_silent)
+					if (is_profilelist && ptr_app->is_silent)
 						app_notes.AppendFormat (SZ_TAB L"%s\r\n", app.LocaleString (IDS_HIGHLIGHT_SILENT, nullptr).GetString ());
 
 					if (!_app_isappexists (ptr_app))
@@ -763,7 +775,7 @@ rstring _app_gettooltip (HWND hwnd, INT listview_id, LPARAM lparam)
 
 void _app_setappiteminfo (HWND hwnd, INT listview_id, INT item, size_t app_hash, PITEM_APP ptr_app)
 {
-	if (!ptr_app || !listview_id || item == INVALID_INT)
+	if (!listview_id || item == INVALID_INT)
 		return;
 
 	_app_getappicon (ptr_app, true, &ptr_app->icon_id, nullptr);
@@ -776,7 +788,7 @@ void _app_setappiteminfo (HWND hwnd, INT listview_id, INT item, size_t app_hash,
 
 void _app_setruleiteminfo (HWND hwnd, INT listview_id, INT item, PITEM_RULE ptr_rule, bool include_apps)
 {
-	if (!ptr_rule || !listview_id || item == INVALID_INT)
+	if (!listview_id || item == INVALID_INT)
 		return;
 
 	_r_listview_setitem (hwnd, listview_id, item, 0, ptr_rule->is_readonly && ptr_rule->type == DataRuleCustom ? _r_fmt (L"%s" SZ_RULE_INTERNAL_MENU, ptr_rule->pname) : ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule));
@@ -1726,9 +1738,12 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 		}
 
 		// add rules
-		for (size_t i = 0; i < rules_arr.size (); i++)
+		INT item_id = INVALID_INT;
+
+		for (auto &p : rules_arr)
 		{
-			PR_OBJECT ptr_rule_object = _r_obj_reference (rules_arr.at (i));
+			item_id += 1;
+			PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 			if (!ptr_rule_object)
 				continue;
@@ -1743,7 +1758,7 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 				{
 					_r_fastlock_acquireshared (&lock_checkbox);
 
-					_r_listview_additem (hwnd, listview_id, 0, 0, ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), i);
+					_r_listview_additem (hwnd, listview_id, 0, 0, ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), item_id);
 					_app_setruleiteminfo (hwnd, listview_id, 0, ptr_rule, false);
 
 					_r_fastlock_releaseshared (&lock_checkbox);

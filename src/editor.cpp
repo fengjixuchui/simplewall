@@ -33,7 +33,7 @@ INT_PTR CALLBACK AddRuleProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 			_r_wnd_addstyle (hwnd, IDC_SAVE, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
 			_r_wnd_addstyle (hwnd, IDC_CLOSE, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
 
-			_r_ctrl_enable (hwnd, IDC_SAVE, false);
+			_r_ctrl_enable (hwnd, IDC_SAVE, SendDlgItemMessage (hwnd, IDC_RULE_ID, WM_GETTEXTLENGTH, 0, 0) > 0); // enable apply button
 
 			break;
 		}
@@ -256,7 +256,9 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 					{
 						_r_str_trim (rule_single, DIVIDER_TRIM DIVIDER_RULE);
 
+						_r_fastlock_acquireshared (&lock_checkbox);
 						_r_listview_additem (hwnd, IDC_RULE_REMOTE_ID, index, 0, rule_single, I_IMAGENONE, I_GROUPIDNONE, index);
+						_r_fastlock_releaseshared (&lock_checkbox);
 
 						index += 1;
 					}
@@ -296,7 +298,9 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 					{
 						_r_str_trim (rule_single, DIVIDER_TRIM DIVIDER_RULE);
 
+						_r_fastlock_acquireshared (&lock_checkbox);
 						_r_listview_additem (hwnd, IDC_RULE_LOCAL_ID, index, 0, rule_single, I_IMAGENONE, I_GROUPIDNONE, index);
+						_r_fastlock_releaseshared (&lock_checkbox);
 
 						index += 1;
 					}
@@ -322,56 +326,59 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 			{
 				_app_listviewsetview (hwnd, IDC_RULE_APPS_ID);
 
-				_r_listview_setstyle (hwnd, IDC_RULE_APPS_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES, FALSE);
-				_r_listview_addcolumn (hwnd, IDC_RULE_APPS_ID, 0, app.LocaleString (IDS_NAME, nullptr), -100, LVCFMT_LEFT);
+				_r_listview_setstyle (hwnd, IDC_RULE_APPS_ID, LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES, TRUE);
+
+				_r_listview_addcolumn (hwnd, IDC_RULE_APPS_ID, 0, app.LocaleString (IDS_NAME, nullptr), 0, LVCFMT_LEFT);
+
+				_r_listview_addgroup (hwnd, IDC_RULE_APPS_ID, 0, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
+				_r_listview_addgroup (hwnd, IDC_RULE_APPS_ID, 1, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
+				_r_listview_addgroup (hwnd, IDC_RULE_APPS_ID, 2, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
 
 				// apps (apply to)
+				for (auto &p : apps)
 				{
-					_r_fastlock_acquireshared (&lock_access);
+					PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
 
-					for (auto &p : apps)
+					if (!ptr_app_object)
+						continue;
+
+					PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+
+					if (ptr_app)
 					{
-						PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
+						INT group_id;
 
-						if (!ptr_app_object)
-							continue;
+						if (ptr_app->type == DataAppUWP)
+							group_id = 2;
 
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						else if (ptr_app->type == DataAppService)
+							group_id = 1;
 
-						if (!ptr_app)
-						{
-							_r_obj_dereference (ptr_app_object);
-							continue;
-						}
-
-						// windows store apps (win8+)
-						if (ptr_app->type == DataAppUWP && !_r_sys_validversion (6, 2))
-						{
-							_r_obj_dereference (ptr_app_object);
-							continue;
-						}
+						else
+							group_id = 0;
 
 						// check for services
 						const bool is_enabled = (ptr_rule->apps.find (p.first) != ptr_rule->apps.end ()) || ptr_rule->is_forservices && (p.first == config.ntoskrnl_hash || p.first == config.svchost_hash);
 
 						_r_fastlock_acquireshared (&lock_checkbox);
 
-						_r_listview_additem (hwnd, IDC_RULE_APPS_ID, 0, 0, _r_path_getfilename (ptr_app->display_name), ptr_app->icon_id, I_GROUPIDNONE, p.first);
+						_r_listview_additem (hwnd, IDC_RULE_APPS_ID, 0, 0, _r_path_getfilename (ptr_app->display_name), ptr_app->icon_id, group_id, p.first);
 						_r_listview_setitemcheck (hwnd, IDC_RULE_APPS_ID, 0, is_enabled);
 
 						_r_fastlock_releaseshared (&lock_checkbox);
-
-						_r_obj_dereference (ptr_app_object);
 					}
 
-					_r_fastlock_releaseshared (&lock_access);
-
-					// resize column
-					_r_listview_setcolumn (hwnd, IDC_RULE_APPS_ID, 0, nullptr, -100);
-
-					// sort column
-					_app_listviewsort (hwnd, IDC_RULE_APPS_ID);
+					_r_obj_dereference (ptr_app_object);
 				}
+
+				// resize column
+				_r_listview_setcolumn (hwnd, IDC_RULE_APPS_ID, 0, nullptr, -100);
+
+				// localize groups
+				_app_refreshgroups (hwnd, IDC_RULE_APPS_ID);
+
+				// sort column
+				_app_listviewsort (hwnd, IDC_RULE_APPS_ID);
 			}
 
 			// hints
@@ -557,6 +564,7 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 								if (_r_fastlock_islocked (&lock_checkbox))
 									break;
 
+								_app_refreshgroups (hwnd, listview_id);
 								_app_listviewsort (hwnd, listview_id);
 							}
 						}
@@ -693,7 +701,8 @@ INT_PTR CALLBACK EditorPagesProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpa
 
 					_r_fastlock_releaseshared (&lock_checkbox);
 
-					_app_listviewsort (hwnd, IDC_RULE_APPS_ID, 0);
+					_app_refreshgroups (hwnd, IDC_RULE_APPS_ID);
+					_app_listviewsort (hwnd, IDC_RULE_APPS_ID);
 
 					break;
 				}
@@ -960,6 +969,9 @@ INT_PTR CALLBACK EditorProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 						for (INT i = 0; i < _r_listview_getitemcount (hpage_apps, IDC_RULE_APPS_ID); i++)
 						{
 							const size_t app_hash = _r_listview_getitemlparam (hpage_apps, IDC_RULE_APPS_ID, i);
+
+							if (ptr_rule->is_forservices && (app_hash == config.ntoskrnl_hash || app_hash == config.svchost_hash))
+								continue;
 
 							if (_app_isappfound (app_hash))
 							{

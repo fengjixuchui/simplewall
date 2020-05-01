@@ -305,8 +305,8 @@ INT CALLBACK _app_listviewcompare_callback (LPARAM lparam1, LPARAM lparam2, LPAR
 		// timestamp sorting
 		if ((listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP) && column_id == 1)
 		{
-			time_t timestamp1 = (time_t)_app_getappinfo (lparam1, InfoTimestamp);
-			time_t timestamp2 = (time_t)_app_getappinfo (lparam2, InfoTimestamp);
+			const time_t timestamp1 = (time_t)_app_getappinfo (lparam1, InfoTimestamp);
+			const time_t timestamp2 = (time_t)_app_getappinfo (lparam2, InfoTimestamp);
 
 			if (timestamp1 < timestamp2)
 				result = -1;
@@ -329,7 +329,9 @@ INT CALLBACK _app_listviewcompare_callback (LPARAM lparam1, LPARAM lparam2, LPAR
 
 void _app_listviewsort (HWND hwnd, INT listview_id, INT column_id, bool is_notifycode)
 {
-	if (!listview_id)
+	const HWND hlistview = GetDlgItem (hwnd, listview_id);
+
+	if (!hlistview)
 		return;
 
 	const INT column_count = _r_listview_getcolumncount (hwnd, listview_id);
@@ -359,7 +361,150 @@ void _app_listviewsort (HWND hwnd, INT listview_id, INT column_id, bool is_notif
 
 	_r_listview_setcolumnsortindex (hwnd, listview_id, column_id, is_descend ? -1 : 1);
 
-	SendDlgItemMessage (hwnd, listview_id, LVM_SORTITEMS, (WPARAM)GetDlgItem (hwnd, listview_id), (LPARAM)&_app_listviewcompare_callback);
+	SendMessage (hlistview, LVM_SORTITEMS, (WPARAM)hlistview, (LPARAM)&_app_listviewcompare_callback);
+}
+
+void _app_refreshgroups (HWND hwnd, INT listview_id)
+{
+	UINT group1_title;
+	UINT group2_title;
+	UINT group3_title;
+
+	if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
+	{
+		group1_title = IDS_GROUP_ALLOWED;
+		group2_title = IDS_GROUP_SPECIAL_APPS;
+		group3_title = IDS_GROUP_BLOCKED;
+	}
+	else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
+	{
+		group1_title = IDS_GROUP_ENABLED;
+		group2_title = IDS_GROUP_SPECIAL;
+		group3_title = IDS_GROUP_DISABLED;
+	}
+	else if (listview_id == IDC_RULE_APPS_ID)
+	{
+		group1_title = IDS_TAB_APPS;
+		group2_title = IDS_TAB_SERVICES;
+		group3_title = IDS_TAB_PACKAGES;
+	}
+	else
+	{
+		return;
+	}
+
+	const INT total_count = _r_listview_getitemcount (hwnd, listview_id);
+
+	INT group1_count = 0;
+	INT group2_count = 0;
+	INT group3_count = 0;
+
+	for (INT i = 0; i < total_count; i++)
+	{
+		if (listview_id == IDC_RULE_APPS_ID && !_r_listview_isitemchecked (hwnd, listview_id, i))
+			continue;
+
+		LVITEM lvi = {0};
+
+		lvi.mask = LVIF_GROUPID;
+		lvi.iItem = i;
+
+		if (SendDlgItemMessage (hwnd, listview_id, LVM_GETITEM, 0, (LPARAM)&lvi))
+		{
+			if (lvi.iGroupId == 2)
+				group3_count += 1;
+
+			else if (lvi.iGroupId == 1)
+				group2_count += 1;
+
+			else
+				group1_count += 1;
+		}
+	}
+
+	_r_listview_setgroup (hwnd, listview_id, 0, app.LocaleString (group1_title, total_count ? _r_fmt (L" (%d/%d)", group1_count, total_count).GetString () : nullptr), 0, 0);
+	_r_listview_setgroup (hwnd, listview_id, 1, app.LocaleString (group2_title, total_count ? _r_fmt (L" (%d/%d)", group2_count, total_count).GetString () : nullptr), 0, 0);
+	_r_listview_setgroup (hwnd, listview_id, 2, app.LocaleString (group3_title, total_count ? _r_fmt (L" (%d/%d)", group3_count, total_count).GetString () : nullptr), 0, 0);
+}
+
+void _app_refreshstatus (HWND hwnd, INT listview_id)
+{
+	PITEM_STATUS pstatus = (PITEM_STATUS)_r_mem_allocex (sizeof (ITEM_STATUS), HEAP_ZERO_MEMORY);
+
+	if (pstatus)
+		_app_getcount (pstatus);
+
+	const HWND hstatus = GetDlgItem (hwnd, IDC_STATUSBAR);
+	const HDC hdc = GetDC (hstatus);
+
+	// item count
+	if (hdc)
+	{
+		SelectObject (hdc, (HFONT)SendMessage (hstatus, WM_GETFONT, 0, 0)); // fix
+
+		const INT parts_count = 3;
+		const INT spacing = _r_dc_getdpi (hwnd, 12);
+
+		rstring text[parts_count];
+		INT parts[parts_count] = {0};
+		LONG size[parts_count] = {0};
+		LONG lay = 0;
+
+		for (INT i = 0; i < parts_count; i++)
+		{
+			switch (i)
+			{
+				case 1:
+				{
+					if (pstatus)
+						text[i].Format (L"%s: %" PR_SIZE_T, app.LocaleString (IDS_STATUS_UNUSED_APPS, nullptr).GetString (), pstatus->apps_unused_count);
+
+					break;
+				}
+
+				case 2:
+				{
+					if (pstatus)
+						text[i].Format (L"%s: %" PR_SIZE_T, app.LocaleString (IDS_STATUS_TIMER_APPS, nullptr).GetString (), pstatus->apps_timer_count);
+
+					break;
+				}
+			}
+
+			if (i)
+			{
+				size[i] = _r_dc_fontwidth (hdc, text[i], text[i].GetLength ()) + spacing;
+				lay += size[i];
+			}
+		}
+
+		RECT rc_client = {0};
+		GetClientRect (hstatus, &rc_client);
+
+		parts[0] = _R_RECT_WIDTH (&rc_client) - lay - _r_dc_getsystemmetrics (hwnd, SM_CXVSCROLL) - (_r_dc_getsystemmetrics (hwnd, SM_CXBORDER) * 2);
+		parts[1] = parts[0] + size[1];
+		parts[2] = parts[1] + size[2];
+
+		SendMessage (hstatus, SB_SETPARTS, parts_count, (LPARAM)parts);
+
+		for (INT i = 1; i < parts_count; i++)
+			_r_status_settext (hwnd, IDC_STATUSBAR, i, text[i]);
+
+		ReleaseDC (hstatus, hdc);
+	}
+
+	// group information
+	if (listview_id)
+	{
+		if (listview_id == INVALID_INT)
+			listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
+
+		if ((SendDlgItemMessage (hwnd, listview_id, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_CHECKBOXES) != 0)
+			_app_refreshgroups (hwnd, listview_id);
+	}
+
+	if (pstatus)
+		_r_mem_free (pstatus);
 }
 
 INT _app_getposition (HWND hwnd, INT listview_id, LPARAM lparam)
@@ -369,14 +514,14 @@ INT _app_getposition (HWND hwnd, INT listview_id, LPARAM lparam)
 	lvfi.flags = LVFI_PARAM;
 	lvfi.lParam = lparam;
 
-	INT pos = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_FINDITEM, (WPARAM)INVALID_INT, (LPARAM)&lvfi);
-
-	return pos;
+	return (INT)SendDlgItemMessage (hwnd, listview_id, LVM_FINDITEM, (WPARAM)INVALID_INT, (LPARAM)&lvfi);
 }
 
 void _app_showitem (HWND hwnd, INT listview_id, INT item, INT scroll_pos)
 {
-	if (!listview_id)
+	const HWND hlistview = GetDlgItem (hwnd, listview_id);
+
+	if (!hlistview)
 		return;
 
 	_app_settab_id (hwnd, listview_id);
@@ -385,8 +530,6 @@ void _app_showitem (HWND hwnd, INT listview_id, INT item, INT scroll_pos)
 
 	if (!total_count)
 		return;
-
-	const HWND hlistview = GetDlgItem (hwnd, listview_id);
 
 	if (item != INVALID_INT)
 	{
