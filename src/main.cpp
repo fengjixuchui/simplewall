@@ -554,8 +554,6 @@ void _app_config_apply (HWND hwnd, INT ctrl_id)
 
 			if (new_val)
 			{
-				_r_fastlock_acquireshared (&lock_access);
-
 				for (auto &p : apps)
 				{
 					PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
@@ -575,8 +573,6 @@ void _app_config_apply (HWND hwnd, INT ctrl_id)
 
 					_r_obj_dereference (ptr_app_object);
 				}
-
-				_r_fastlock_releaseshared (&lock_access);
 			}
 
 			_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT));
@@ -1235,9 +1231,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						app.ConfigSet (L"BlocklistSpyState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (app.GetHWND (), new_state, INVALID_INT, INVALID_INT, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 					else if (ctrl_id >= IDC_BLOCKLIST_UPDATE_DISABLE && ctrl_id <= IDC_BLOCKLIST_UPDATE_BLOCK)
 					{
@@ -1247,9 +1241,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						app.ConfigSet (L"BlocklistUpdateState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (app.GetHWND (), INVALID_INT, new_state, INVALID_INT, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 					else if (ctrl_id >= IDC_BLOCKLIST_EXTRA_DISABLE && ctrl_id <= IDC_BLOCKLIST_EXTRA_BLOCK)
 					{
@@ -1259,9 +1251,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						app.ConfigSet (L"BlocklistExtraState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (app.GetHWND (), INVALID_INT, INVALID_INT, new_state, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 
 					break;
@@ -1300,7 +1290,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					const bool is_enabled = is_checked || (IsDlgButtonChecked (hwnd, IDC_ENABLELOG_CHK) == BST_CHECKED);
 
 					app.ConfigSet (L"IsLogUiEnabled", is_checked);
-					//SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_PRESSBUTTON, IDM_TRAY_ENABLELOG_CHK, MAKELPARAM (is_checked, 0));
+					SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_PRESSBUTTON, IDM_TRAY_ENABLEUILOG_CHK, MAKELPARAM (is_checked, 0));
 
 					_r_ctrl_enable (hwnd, IDC_EXCLUDESTEALTH_CHK, is_enabled);
 
@@ -1574,6 +1564,7 @@ void _app_imagelist_init (HWND hwnd)
 		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOGCLEAR), icon_size_toolbar), nullptr);
 		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_ADD), icon_size_toolbar), nullptr);
 		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_HEARTH), icon_size_toolbar), nullptr);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOGUI), icon_size_toolbar), nullptr);
 	}
 
 	// rules imagelist (small)
@@ -1615,6 +1606,7 @@ void _app_toolbar_init (HWND hwnd)
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, 0, BTNS_SEP);
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, 0, BTNS_BUTTON | BTNS_AUTOSIZE, TBSTATE_ENABLED, 4);
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, 0, BTNS_BUTTON | BTNS_AUTOSIZE, TBSTATE_ENABLED, 5);
+	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, 0, BTNS_BUTTON | BTNS_AUTOSIZE, TBSTATE_ENABLED, 10);
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, 0, BTNS_SEP);
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, IDM_REFRESH, 0, BTNS_BUTTON | BTNS_AUTOSIZE, TBSTATE_ENABLED, 2);
 	_r_toolbar_addbutton (hwnd, IDC_TOOLBAR, IDM_SETTINGS, 0, BTNS_BUTTON | BTNS_AUTOSIZE, TBSTATE_ENABLED, 3);
@@ -2103,6 +2095,7 @@ find_wrap:
 
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, nullptr, 0, app.ConfigGet (L"IsNotificationsEnabled", true).AsBool () ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED);
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, nullptr, 0, app.ConfigGet (L"IsLogEnabled", false).AsBool () ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, nullptr, 0, app.ConfigGet (L"IsLogUiEnabled", true).AsBool () ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED);
 
 			_app_setinterfacestate (hwnd);
 
@@ -2225,6 +2218,7 @@ find_wrap:
 
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, app.LocaleString (IDS_ENABLENOTIFICATIONS_CHK, nullptr), BTNS_CHECK | BTNS_AUTOSIZE);
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, app.LocaleString (IDS_ENABLELOG_CHK, nullptr), BTNS_CHECK | BTNS_AUTOSIZE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, app.LocaleString (IDS_ENABLEUILOG_CHK, L" (session only)"), BTNS_CHECK | BTNS_AUTOSIZE);
 
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, app.LocaleString (IDS_LOGSHOW, L" (Ctrl+I)"), BTNS_BUTTON | BTNS_AUTOSIZE);
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L" (Ctrl+X)"), BTNS_BUTTON | BTNS_AUTOSIZE);
@@ -2352,6 +2346,7 @@ find_wrap:
 
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, app.LocaleString (IDS_ENABLENOTIFICATIONS_CHK, nullptr), BTNS_CHECK | BTNS_AUTOSIZE);
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, app.LocaleString (IDS_ENABLELOG_CHK, nullptr), BTNS_CHECK | BTNS_AUTOSIZE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, app.LocaleString (IDS_ENABLEUILOG_CHK, nullptr), BTNS_CHECK | BTNS_AUTOSIZE);
 
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, app.LocaleString (IDS_LOGSHOW, L" (Ctrl+I)"), BTNS_BUTTON | BTNS_AUTOSIZE);
 			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L" (Ctrl+X)"), BTNS_BUTTON | BTNS_AUTOSIZE);
@@ -2473,9 +2468,7 @@ find_wrap:
 
 				DragQueryFile ((HDROP)wparam, i, file, length);
 
-				_r_fastlock_acquireshared (&lock_access);
 				app_hash = _app_addapplication (hwnd, file, 0, 0, 0, false, false);
-				_r_fastlock_releaseshared (&lock_access);
 
 				SAFE_DELETE_ARRAY (file);
 			}
@@ -3095,9 +3088,7 @@ find_wrap:
 						{
 							if (_wfp_isfiltersinstalled () && !_wfp_isfiltersapplying ())
 							{
-								_r_fastlock_acquireshared (&lock_access);
-								bool is_appexist = _app_isapphavedrive (FirstDriveFromMask (lpdbv->dbcv_unitmask));
-								_r_fastlock_releaseshared (&lock_access);
+								const bool is_appexist = _app_isapphavedrive (FirstDriveFromMask (lpdbv->dbcv_unitmask));
 
 								if (is_appexist)
 									_app_changefilters (hwnd, true, false);
@@ -3239,9 +3230,7 @@ find_wrap:
 				{
 					const size_t app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
 
-					_r_fastlock_acquireshared (&lock_access);
 					PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
-					_r_fastlock_releaseshared (&lock_access);
 
 					if (!ptr_app_object)
 						continue;
@@ -3417,8 +3406,6 @@ find_wrap:
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
 					app.ConfigSet (L"ShowFilenames", new_val);
 
-					_r_fastlock_acquireshared (&lock_access);
-
 					// regroup apps
 					for (auto &p : apps)
 					{
@@ -3452,8 +3439,6 @@ find_wrap:
 						_r_obj_dereference (ptr_app_object);
 					}
 
-					_r_fastlock_releaseshared (&lock_access);
-
 					_app_listviewsort (hwnd, (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT));
 
 					break;
@@ -3465,8 +3450,6 @@ find_wrap:
 
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
 					app.ConfigSet (L"IsEnableSpecialGroup", new_val);
-
-					_r_fastlock_acquireshared (&lock_access);
 
 					// regroup apps
 					for (auto &p : apps)
@@ -3498,8 +3481,6 @@ find_wrap:
 
 						_r_obj_dereference (ptr_app_object);
 					}
-
-					_r_fastlock_releaseshared (&lock_access);
 
 					const INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
@@ -3581,8 +3562,6 @@ find_wrap:
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
 					app.ConfigSet (L"IsIconsHidden", new_val);
 
-					_r_fastlock_acquireshared (&lock_access);
-
 					for (auto &p : apps)
 					{
 						PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
@@ -3612,8 +3591,6 @@ find_wrap:
 
 						_r_obj_dereference (ptr_app_object);
 					}
-
-					_r_fastlock_releaseshared (&lock_access);
 
 					break;
 				}
@@ -3752,9 +3729,7 @@ find_wrap:
 
 						app.ConfigSet (L"BlocklistSpyState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (hwnd, new_state, INVALID_INT, INVALID_INT, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 					else if (ctrl_id >= IDM_BLOCKLIST_UPDATE_DISABLE && ctrl_id <= IDM_BLOCKLIST_UPDATE_BLOCK)
 					{
@@ -3764,9 +3739,7 @@ find_wrap:
 
 						app.ConfigSet (L"BlocklistUpdateState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (hwnd, INVALID_INT, new_state, INVALID_INT, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 					else if (ctrl_id >= IDM_BLOCKLIST_EXTRA_DISABLE && ctrl_id <= IDM_BLOCKLIST_EXTRA_BLOCK)
 					{
@@ -3776,9 +3749,7 @@ find_wrap:
 
 						app.ConfigSet (L"BlocklistExtraState", new_state);
 
-						_r_fastlock_acquireshared (&lock_access);
 						_app_ruleblocklistset (hwnd, INVALID_INT, INVALID_INT, new_state, true);
-						_r_fastlock_releaseshared (&lock_access);
 					}
 
 					break;
@@ -3800,7 +3771,7 @@ find_wrap:
 				{
 					const bool new_val = !app.ConfigGet (L"IsLogUiEnabled", true).AsBool ();
 
-					//_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, ctrl_id, nullptr, 0, new_val ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED);
+					_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, ctrl_id, nullptr, 0, new_val ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED);
 					app.ConfigSet (L"IsLogUiEnabled", new_val);
 
 					break;
@@ -4525,9 +4496,7 @@ find_wrap:
 									_app_timer_reset (hwnd, ptr_app);
 									_app_freenotify (app_hash, ptr_app);
 
-									_r_fastlock_acquireshared (&lock_access);
 									_app_freeapplication (app_hash);
-									_r_fastlock_releaseshared (&lock_access);
 
 									_r_obj_dereferenceex (ptr_app_object, 2);
 								}
@@ -4614,8 +4583,6 @@ find_wrap:
 					GUIDS_VEC guids;
 					std::vector<size_t> apps_list;
 
-					_r_fastlock_acquireshared (&lock_access);
-
 					for (auto &p : apps)
 					{
 						PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
@@ -4654,8 +4621,6 @@ find_wrap:
 					for (auto &p : apps_list)
 						_app_freeapplication (p);
 
-					_r_fastlock_releaseshared (&lock_access);
-
 					if (is_deleted)
 					{
 						_wfp_destroyfilters_array (_wfp_getenginehandle (), guids, __LINE__);
@@ -4673,8 +4638,6 @@ find_wrap:
 						break;
 
 					OBJECTS_VEC rules;
-
-					_r_fastlock_acquireshared (&lock_access);
 
 					for (auto &p : apps)
 					{
@@ -4696,8 +4659,6 @@ find_wrap:
 							_r_obj_dereference (ptr_app_object);
 						}
 					}
-
-					_r_fastlock_releaseshared (&lock_access);
 
 					_wfp_create3filters (_wfp_getenginehandle (), rules, __LINE__);
 					_app_freeobjects_vec (rules);
