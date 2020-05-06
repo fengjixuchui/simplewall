@@ -96,7 +96,6 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 		return;
 
 	const INT column_count = _r_listview_getcolumncount (hwnd, listview_id);
-	const INT item_count = _r_listview_getitemcount (hwnd, listview_id);
 
 	if (!column_count)
 		return;
@@ -106,11 +105,6 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 
 	RECT rc_client = {0};
 	GetClientRect (hlistview, &rc_client);
-
-	const INT total_width = _R_RECT_WIDTH (&rc_client);
-	const INT spacing = _r_dc_getsystemmetrics (hwnd, SM_CXSMICON);
-
-	const bool is_tableview = (SendMessage (hlistview, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS);
 
 	// get device context and fix font set
 	const HDC hdc_listview = GetDC (hlistview);
@@ -122,46 +116,61 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 	if (hdc_header)
 		SelectObject (hdc_header, (HFONT)SendMessage (hheader, WM_GETFONT, 0, 0)); // fix
 
-	const INT column_max_width = _r_dc_getdpi (hwnd, 120);
-	INT column_min_width;
-
-	INT column_width;
 	INT calculated_width = 0;
 
-	for (INT i = column_count - 1; i != INVALID_INT; i--)
-	{
-		// get column text width
-		{
-			const rstring column_text = _r_listview_getcolumntext (hwnd, listview_id, i);
-			column_width = _r_dc_fontwidth (hdc_header, column_text, column_text.GetLength ()) + spacing;
-			column_min_width = column_width;
-		}
+	// set general column id
+	INT column_general_id = 0;
 
-		if (i == 0)
+	const bool is_tableview = (SendMessage (hlistview, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS);
+
+	const INT total_width = _R_RECT_WIDTH (&rc_client);
+	const INT spacing = _r_dc_getsystemmetrics (hwnd, SM_CXSMICON);
+
+	const INT column_max_width = _r_dc_getdpi (hwnd, 120);
+
+	for (INT i = 0; i < column_count; i++)
+	{
+		if (i == column_general_id)
+			continue;
+
+		// get column text width
+		const rstring column_text = _r_listview_getcolumntext (hwnd, listview_id, i);
+		INT column_width = _r_dc_fontwidth (hdc_header, column_text, column_text.GetLength ()) + spacing;
+
+		if (column_width >= column_max_width)
 		{
-			column_width = std::clamp (total_width - calculated_width, (std::min) (column_min_width, total_width), total_width);
+			column_width = column_max_width;
 		}
 		else
 		{
 			// calculate max width of listview subitems (only for details view)
 			if (is_tableview)
 			{
-				for (INT j = 0; j < item_count; j++)
+				for (INT j = 0; j < _r_listview_getitemcount (hwnd, listview_id); j++)
 				{
 					const rstring item_text = _r_listview_getitemtext (hwnd, listview_id, j, i);
 					const INT text_width = _r_dc_fontwidth (hdc_listview, item_text, item_text.GetLength ()) + spacing;
+
+					// do not continue reaching higher and higher values for performance reason!
+					if (text_width >= column_max_width)
+					{
+						column_width = column_max_width;
+						break;
+					}
 
 					if (text_width > column_width)
 						column_width = text_width;
 				}
 			}
-
-			column_width = std::clamp (column_width, column_min_width, (std::max) (column_min_width, column_max_width));
-			calculated_width += column_width;
 		}
 
 		_r_listview_setcolumn (hwnd, listview_id, i, nullptr, column_width);
+
+		calculated_width += column_width;
 	}
+
+	// set general column width
+	_r_listview_setcolumn (hwnd, listview_id, column_general_id, nullptr, (std::max)(total_width - calculated_width, column_max_width));
 
 	if (hdc_listview)
 		ReleaseDC (hlistview, hdc_listview);
@@ -334,6 +343,9 @@ void _app_listviewsort (HWND hwnd, INT listview_id, INT column_id, bool is_notif
 	if (!hlistview)
 		return;
 
+	if ((GetWindowLongPtr (hlistview, GWL_STYLE) & (LVS_NOSORTHEADER | LVS_OWNERDATA)) != 0)
+		return;
+
 	const INT column_count = _r_listview_getcolumncount (hwnd, listview_id);
 
 	if (!column_count)
@@ -370,6 +382,9 @@ void _app_refreshgroups (HWND hwnd, INT listview_id)
 	UINT group2_title;
 	UINT group3_title;
 
+	if (!SendDlgItemMessage (hwnd, listview_id, LVM_ISGROUPVIEWENABLED, 0, 0))
+		return;
+
 	if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 	{
 		group1_title = IDS_GROUP_ALLOWED;
@@ -401,24 +416,31 @@ void _app_refreshgroups (HWND hwnd, INT listview_id)
 
 	for (INT i = 0; i < total_count; i++)
 	{
-		if (listview_id == IDC_RULE_APPS_ID && !_r_listview_isitemchecked (hwnd, listview_id, i))
-			continue;
-
-		LVITEM lvi = {0};
-
-		lvi.mask = LVIF_GROUPID;
-		lvi.iItem = i;
-
-		if (SendDlgItemMessage (hwnd, listview_id, LVM_GETITEM, 0, (LPARAM)&lvi))
+		if (listview_id == IDC_RULE_APPS_ID)
 		{
-			if (lvi.iGroupId == 2)
-				group3_count += 1;
+			if (_r_listview_isitemchecked (hwnd, listview_id, i))
+			{
+				group1_count = group2_count = group3_count += 1;
+			}
+		}
+		else
+		{
+			LVITEM lvi = {0};
 
-			else if (lvi.iGroupId == 1)
-				group2_count += 1;
+			lvi.mask = LVIF_GROUPID;
+			lvi.iItem = i;
 
-			else
-				group1_count += 1;
+			if (SendDlgItemMessage (hwnd, listview_id, LVM_GETITEM, 0, (LPARAM)&lvi))
+			{
+				if (lvi.iGroupId == 2)
+					group3_count += 1;
+
+				else if (lvi.iGroupId == 1)
+					group2_count += 1;
+
+				else
+					group1_count += 1;
+			}
 		}
 	}
 
@@ -499,8 +521,7 @@ void _app_refreshstatus (HWND hwnd, INT listview_id)
 		if (listview_id == INVALID_INT)
 			listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
-		if ((SendDlgItemMessage (hwnd, listview_id, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_CHECKBOXES) != 0)
-			_app_refreshgroups (hwnd, listview_id);
+		_app_refreshgroups (hwnd, listview_id);
 	}
 
 	if (pstatus)
