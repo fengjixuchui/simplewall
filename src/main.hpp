@@ -84,8 +84,8 @@ enum EnumInfo
 {
 	InfoName = 0,
 	InfoPath = 1,
-	InfoTimestamp = 2,
-	InfoTimer = 3,
+	InfoTimestampPtr = 2,
+	InfoTimerPtr = 3,
 	InfoIconId = 4,
 	InfoListviewId = 5,
 	InfoIsSilent = 6,
@@ -169,7 +169,7 @@ enum EnumInstall
 #define BACKUP_HOURS_PERIOD 4 // make backup every X hour(s) (default)
 
 #define LEN_IP_MAX 68
-#define UMAP_CACHE_LIMIT 1024
+#define MAP_CACHE_MAX 1024
 
 #define FILTERS_TIMEOUT 9000
 #define TRANSACTION_TIMEOUT 6000

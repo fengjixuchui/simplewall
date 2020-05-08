@@ -28,13 +28,13 @@ LONG_PTR _app_getappinfo (size_t app_hash, EnumInfo info_key)
 			else if (!_r_str_isempty (ptr_app->original_path))
 				result = (LONG_PTR)ptr_app->original_path;
 		}
-		else if (info_key == InfoTimestamp)
+		else if (info_key == InfoTimestampPtr)
 		{
-			result = ptr_app->timestamp;
+			result = (LONG_PTR)&ptr_app->timestamp;
 		}
-		else if (info_key == InfoTimer)
+		else if (info_key == InfoTimerPtr)
 		{
-			result = ptr_app->timer;
+			result = (LONG_PTR)&ptr_app->timer;
 		}
 		else if (info_key == InfoIconId)
 		{
@@ -253,7 +253,7 @@ PR_OBJECT _app_getrulebyhash (size_t rule_hash)
 
 PR_OBJECT _app_getnetworkitem (size_t network_hash)
 {
-	if (!network_hash || network_map.find (network_hash) == network_map.end ())
+	if (network_map.find (network_hash) == network_map.end ())
 		return nullptr;
 
 	return _r_obj_reference (network_map[network_hash]);
@@ -270,7 +270,7 @@ size_t _app_getnetworkapp (size_t network_hash)
 
 	if (ptr_network)
 	{
-		size_t app_hash = ptr_network->app_hash;
+		const size_t app_hash = ptr_network->app_hash;
 
 		_r_obj_dereference (ptr_network_object);
 
@@ -499,7 +499,10 @@ INT _app_getrulegroup (const PITEM_RULE ptr_rule)
 
 INT _app_getruleicon (const PITEM_RULE ptr_rule)
 {
-	return ptr_rule->is_block ? 1 : 0;
+	if (ptr_rule->is_block)
+		return 1;
+
+	return 0;
 }
 
 COLORREF _app_getrulecolor (INT listview_id, size_t rule_idx)
@@ -926,7 +929,7 @@ bool _app_ruleblocklistsetchange (PITEM_RULE ptr_rule, INT new_state)
 
 bool _app_ruleblocklistsetstate (PITEM_RULE ptr_rule, INT spy_state, INT update_state, INT extra_state)
 {
-	if (!ptr_rule || ptr_rule->type != DataRuleBlocklist || _r_str_isempty (ptr_rule->pname))
+	if (ptr_rule->type != DataRuleBlocklist)
 		return false;
 
 	if (_r_str_compare (ptr_rule->pname, L"spy_", 4) == 0)
@@ -949,12 +952,11 @@ void _app_ruleblocklistset (HWND hwnd, INT spy_state, INT update_state, INT extr
 	const INT listview_id = _app_getlistview_id (DataRuleBlocklist);
 
 	size_t changes_count = 0;
-	INT index = -1; // negative initial value is required for correct array indexing
+	INT index = INVALID_INT; // negative initial value is required for correct array indexing
 
 	for (auto &p : rules_arr)
 	{
 		index += 1;
-
 		PR_OBJECT ptr_rule_object = _r_obj_reference (p);
 
 		if (!ptr_rule_object)
@@ -1002,7 +1004,7 @@ void _app_ruleblocklistset (HWND hwnd, INT spy_state, INT update_state, INT extr
 	{
 		if (hwnd)
 		{
-			if ((INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT) == listview_id)
+			if (listview_id == (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT))
 				_app_listviewsort (hwnd, listview_id);
 
 			_app_refreshstatus (hwnd, listview_id);
@@ -1051,9 +1053,6 @@ rstring _app_appexpandrules (size_t app_hash, LPCWSTR delimeter)
 
 rstring _app_rulesexpandapps (const PITEM_RULE ptr_rule, bool is_fordisplay, LPCWSTR delimeter)
 {
-	if (!ptr_rule)
-		return nullptr;
-
 	rstring result;
 
 	if (is_fordisplay && ptr_rule->is_forservices)
@@ -1108,7 +1107,7 @@ rstring _app_rulesexpandapps (const PITEM_RULE ptr_rule, bool is_fordisplay, LPC
 
 bool _app_isappfound (size_t app_hash)
 {
-	return app_hash && apps.find (app_hash) != apps.end ();
+	return apps.find (app_hash) != apps.end ();
 }
 
 bool _app_isapphaveconnection (size_t app_hash)
@@ -1210,9 +1209,6 @@ bool _app_isappused (const PITEM_APP ptr_app, size_t app_hash)
 
 bool _app_isappexists (const PITEM_APP ptr_app)
 {
-	if (!ptr_app)
-		return false;
-
 	if (ptr_app->is_undeletable)
 		return true;
 
@@ -1375,9 +1371,7 @@ void _app_profile_load_helper (const pugi::xml_node& root, EnumDataType type, UI
 	{
 		if (type == DataAppRegular)
 		{
-			_r_fastlock_acquireshared (&lock_access);
 			_app_addapplication (nullptr, item.attribute (L"path").as_string (), item.attribute (L"timestamp").as_llong (), item.attribute (L"timer").as_llong (), 0, item.attribute (L"is_silent").as_bool (), item.attribute (L"is_enabled").as_bool ());
-			_r_fastlock_releaseshared (&lock_access);
 		}
 		else if (type == DataRuleBlocklist || type == DataRuleSystem || type == DataRuleCustom)
 		{
@@ -1599,16 +1593,14 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 			_r_listview_deleteallitems (hwnd, i);
 	}
 
-	_r_fastlock_acquireshared (&lock_access);
-
 	// clear apps
-	_app_freeobjects_map (apps, true);
+	_app_freeobjects_map (apps, 0);
 
 	// clear services/uwp apps
-	_app_freeobjects_map (apps_helper, true);
+	_app_freeobjects_map (apps_helper, 0);
 
 	// clear rules config
-	_app_freeobjects_map (rules_config, true);
+	_app_freeobjects_map (rules_config, 0);
 
 	// clear rules
 	_app_freeobjects_vec (rules_arr);
@@ -1619,8 +1611,6 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 
 	// generate services list
 	_app_generate_services ();
-
-	_r_fastlock_releaseshared (&lock_access);
 
 	// load profile
 	if (!_r_str_isempty (path_custom) || _r_fs_exists (config.profile_path) || _r_fs_exists (config.profile_path_backup))
@@ -1638,9 +1628,7 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 			if (result.status != pugi::status_file_not_found && result.status != pugi::status_no_document_element)
 				app.LogError (L"pugi::load_file", 0, _r_fmt (L"status: %d,offset: %" PR_PTRDIFF L",text: %hs,file: %s", result.status, result.offset, result.description (), !_r_str_isempty (path_custom) ? path_custom : config.profile_path), UID);
 
-			_r_fastlock_acquireshared (&lock_access);
 			_app_profile_load_fallback ();
-			_r_fastlock_releaseshared (&lock_access);
 		}
 		else
 		{
@@ -1658,9 +1646,7 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 					if (root_apps)
 						_app_profile_load_helper (root_apps, DataAppRegular, version);
 
-					_r_fastlock_acquireshared (&lock_access);
 					_app_profile_load_fallback ();
-					_r_fastlock_releaseshared (&lock_access);
 
 					// load rules config (new!)
 					pugi::xml_node root_rules_config = root.child (L"rules_config");
@@ -1685,8 +1671,6 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 	if (hwnd)
 	{
 		const time_t current_time = _r_unixtime_now ();
-
-		_r_fastlock_acquireshared (&lock_access);
 
 		// add apps
 		for (auto &p : apps)
@@ -1767,8 +1751,6 @@ void _app_profile_load (HWND hwnd, LPCWSTR path_custom)
 
 			_r_obj_dereference (ptr_rule_object);
 		}
-
-		_r_fastlock_releaseshared (&lock_access);
 	}
 
 	if (hwnd && current_listview_id)
@@ -1806,8 +1788,6 @@ void _app_profile_save (LPCWSTR path_custom)
 		// save apps
 		if (root_apps)
 		{
-			_r_fastlock_acquireshared (&lock_access);
-
 			for (auto &p : apps)
 			{
 				PR_OBJECT ptr_app_object = _r_obj_reference (p.second);
@@ -1860,15 +1840,11 @@ void _app_profile_save (LPCWSTR path_custom)
 
 				_r_obj_dereference (ptr_app_object);
 			}
-
-			_r_fastlock_releaseshared (&lock_access);
 		}
 
 		// save user rules
 		if (root_rules_custom)
 		{
-			_r_fastlock_acquireshared (&lock_access);
-
 			for (auto& p : rules_arr)
 			{
 				PR_OBJECT ptr_rule_object = _r_obj_reference (p);
@@ -1927,15 +1903,11 @@ void _app_profile_save (LPCWSTR path_custom)
 
 				_r_obj_dereference (ptr_rule_object);
 			}
-
-			_r_fastlock_releaseshared (&lock_access);
 		}
 
 		// save rules config
 		if (root_rule_config)
 		{
-			_r_fastlock_acquireshared (&lock_access);
-
 			for (auto &p : rules_config)
 			{
 				PR_OBJECT ptr_config_object = _r_obj_reference (p.second);
@@ -1998,8 +1970,6 @@ void _app_profile_save (LPCWSTR path_custom)
 
 				_r_obj_dereference (ptr_config_object);
 			}
-
-			_r_fastlock_releaseshared (&lock_access);
 		}
 
 		doc.save_file (_r_str_isempty (path_custom) ? config.profile_path : path_custom, L"\t", PUGIXML_SAVE_FLAGS, PUGIXML_SAVE_ENCODING);

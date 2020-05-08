@@ -124,9 +124,9 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 	const bool is_tableview = (SendMessage (hlistview, LVM_GETVIEW, 0, 0) == LV_VIEW_DETAILS);
 
 	const INT total_width = _R_RECT_WIDTH (&rc_client);
-	const INT spacing = _r_dc_getsystemmetrics (hwnd, SM_CXSMICON);
 
-	const INT column_max_width = _r_dc_getdpi (hwnd, 120);
+	const INT max_width = _r_dc_getdpi (hwnd, 164);
+	const INT spacing = _r_dc_getsystemmetrics (hwnd, SM_CXSMICON);
 
 	for (INT i = 0; i < column_count; i++)
 	{
@@ -137,9 +137,9 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 		const rstring column_text = _r_listview_getcolumntext (hwnd, listview_id, i);
 		INT column_width = _r_dc_fontwidth (hdc_header, column_text, column_text.GetLength ()) + spacing;
 
-		if (column_width >= column_max_width)
+		if (column_width >= max_width)
 		{
-			column_width = column_max_width;
+			column_width = max_width;
 		}
 		else
 		{
@@ -152,9 +152,9 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 					const INT text_width = _r_dc_fontwidth (hdc_listview, item_text, item_text.GetLength ()) + spacing;
 
 					// do not continue reaching higher and higher values for performance reason!
-					if (text_width >= column_max_width)
+					if (text_width >= max_width)
 					{
-						column_width = column_max_width;
+						column_width = max_width;
 						break;
 					}
 
@@ -170,7 +170,7 @@ void _app_listviewresize (HWND hwnd, INT listview_id, bool is_forced)
 	}
 
 	// set general column width
-	_r_listview_setcolumn (hwnd, listview_id, column_general_id, nullptr, (std::max)(total_width - calculated_width, column_max_width));
+	_r_listview_setcolumn (hwnd, listview_id, column_general_id, nullptr, (std::max)(total_width - calculated_width, max_width));
 
 	if (hdc_listview)
 		ReleaseDC (hlistview, hdc_listview);
@@ -314,14 +314,17 @@ INT CALLBACK _app_listviewcompare_callback (LPARAM lparam1, LPARAM lparam2, LPAR
 		// timestamp sorting
 		if ((listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP) && column_id == 1)
 		{
-			const time_t timestamp1 = (time_t)_app_getappinfo (lparam1, InfoTimestamp);
-			const time_t timestamp2 = (time_t)_app_getappinfo (lparam2, InfoTimestamp);
+			const time_t* timestamp1 = (time_t*)_app_getappinfo (lparam1, InfoTimestampPtr);
+			const time_t* timestamp2 = (time_t*)_app_getappinfo (lparam2, InfoTimestampPtr);
 
-			if (timestamp1 < timestamp2)
-				result = -1;
+			if (timestamp1 && timestamp2)
+			{
+				if (*timestamp1 < *timestamp2)
+					result = -1;
 
-			else if (timestamp1 > timestamp2)
-				result = 1;
+				else if (*timestamp1 > * timestamp2)
+					result = 1;
+			}
 		}
 	}
 

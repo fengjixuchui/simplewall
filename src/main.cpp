@@ -1495,8 +1495,11 @@ void _app_resizewindow (HWND hwnd, LPARAM lparam)
 
 	EndDeferWindowPos (hdefer);
 
-	_r_tab_adjustchild (hwnd, IDC_TAB, GetDlgItem (hwnd, listview_id));
-	_app_listviewresize (hwnd, listview_id, false);
+	if (listview_id)
+	{
+		_r_tab_adjustchild (hwnd, IDC_TAB, GetDlgItem (hwnd, listview_id));
+		_app_listviewresize (hwnd, listview_id, false);
+	}
 
 	_app_refreshstatus (hwnd, 0);
 }
@@ -1657,6 +1660,11 @@ void _app_toolbar_resize ()
 
 void _app_tabs_init (HWND hwnd)
 {
+	RECT rc = {0};
+	GetClientRect (hwnd, &rc);
+
+	SetWindowPos (GetDlgItem (hwnd, IDC_TAB), nullptr, 0, 0, _R_RECT_WIDTH (&rc), _R_RECT_HEIGHT (&rc), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+
 	const HINSTANCE hinst = app.GetHINSTANCE ();
 	const DWORD listview_ex_style = LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES | LVS_EX_HEADERINALLVIEWS;
 	const DWORD listview_style = WS_CHILD | WS_TABSTOP | LVS_SHOWSELALWAYS | LVS_REPORT | LVS_SHAREIMAGELISTS | LVS_AUTOARRANGE;
@@ -1731,16 +1739,22 @@ void _app_tabs_init (HWND hwnd)
 		{
 			_r_listview_setstyle (hwnd, listview_id, listview_ex_style & ~LVS_EX_CHECKBOXES, FALSE); // no checkboxes
 
-			_r_listview_addcolumn (hwnd, listview_id, 0, L"", 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 1, L"", 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 2, L"", 0, LVCFMT_RIGHT);
-			_r_listview_addcolumn (hwnd, listview_id, 3, L"", 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 4, L"", 0, LVCFMT_RIGHT);
-			_r_listview_addcolumn (hwnd, listview_id, 5, L"", 0, LVCFMT_RIGHT);
-			_r_listview_addcolumn (hwnd, listview_id, 6, L"", 0, LVCFMT_RIGHT);
+			_r_listview_addcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, nullptr), 0, LVCFMT_LEFT);
+			_r_listview_addcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL)), 0, LVCFMT_LEFT);
+			_r_listview_addcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL)), 0, LVCFMT_RIGHT);
+			_r_listview_addcolumn (hwnd, listview_id, 3, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE)), 0, LVCFMT_LEFT);
+			_r_listview_addcolumn (hwnd, listview_id, 4, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE)), 0, LVCFMT_RIGHT);
+			_r_listview_addcolumn (hwnd, listview_id, 5, app.LocaleString (IDS_PROTOCOL, nullptr), 0, LVCFMT_RIGHT);
 
-			if (listview_id == IDC_LOG)
-				_r_listview_addcolumn (hwnd, listview_id, 7, L"", 0, LVCFMT_RIGHT);
+			if (listview_id == IDC_NETWORK)
+			{
+				_r_listview_addcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_STATE, nullptr), 0, LVCFMT_RIGHT);
+			}
+			else if (listview_id == IDC_LOG)
+			{
+				_r_listview_addcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_DIRECTION, nullptr), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 7, app.LocaleString (IDS_STATE, nullptr), 0, LVCFMT_RIGHT);
+			}
 		}
 
 		_r_tab_adjustchild (hwnd, IDC_TAB, hlistview);
@@ -1754,9 +1768,7 @@ void _app_initialize ()
 	pugi::set_memory_management_functions (&_r_mem_alloc, &_r_mem_free); // set allocation routine
 
 	// initialize spinlocks
-	_r_fastlock_initialize (&lock_access);
 	_r_fastlock_initialize (&lock_apply);
-	_r_fastlock_initialize (&lock_cache);
 	_r_fastlock_initialize (&lock_checkbox);
 	_r_fastlock_initialize (&lock_logbusy);
 	_r_fastlock_initialize (&lock_logthread);
@@ -1851,9 +1863,6 @@ INT_PTR CALLBACK DlgProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 	if (msg == WM_FINDMSGSTRING)
 	{
 		const LPFINDREPLACE lpfr = (LPFINDREPLACE)lparam;
-
-		if (!lpfr)
-			return FALSE;
 
 		if ((lpfr->Flags & FR_DIALOGTERM) != 0)
 		{
@@ -1981,7 +1990,7 @@ find_wrap:
 			RtlInitializeSListHead (&log_stack.ListHead);
 
 			// create notification window
-			_app_notifycreatewindow (hwnd);
+			_app_notifycreatewindow ();
 
 			// create network monitor thread
 			_r_createthread (&NetworkMonitorThread, (LPVOID)hwnd, false, THREAD_PRIORITY_LOWEST);
@@ -2384,7 +2393,7 @@ find_wrap:
 		{
 			const time_t current_timestamp = (time_t)lparam;
 
-			_app_freeobjects_map (rules_config, true);
+			_app_freeobjects_map (rules_config, 0);
 
 			_r_fs_makebackup (config.profile_path, current_timestamp);
 
@@ -2563,11 +2572,7 @@ find_wrap:
 					}
 					else
 					{
-						if (_r_fastlock_tryacquireshared (&lock_access))
-						{
-							result = _app_nmcustdraw_listview (lpnmcd);
-							_r_fastlock_releaseshared (&lock_access);
-						}
+						result = _app_nmcustdraw_listview (lpnmcd);
 					}
 
 					SetWindowLongPtr (hwnd, DWLP_MSGRESULT, result);
@@ -2584,17 +2589,12 @@ find_wrap:
 
 				case LVN_GETINFOTIP:
 				{
-					if (_r_fastlock_tryacquireshared (&lock_access))
-					{
-						LPNMLVGETINFOTIP lpnmlv = (LPNMLVGETINFOTIP)lparam;
+					LPNMLVGETINFOTIP lpnmlv = (LPNMLVGETINFOTIP)lparam;
 
-						const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
-						const LPARAM idx = _r_listview_getitemlparam (hwnd, listview_id, lpnmlv->iItem);
+					const INT listview_id = static_cast<INT>(lpnmlv->hdr.idFrom);
+					const LPARAM idx = _r_listview_getitemlparam (hwnd, listview_id, lpnmlv->iItem);
 
-						_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, _app_gettooltip (hwnd, listview_id, idx));
-
-						_r_fastlock_releaseshared (&lock_access);
-					}
+					_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, _app_gettooltip (hwnd, listview_id, idx));
 
 					break;
 				}
@@ -2871,6 +2871,7 @@ find_wrap:
 					{
 						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_SHOWINLIST, L"\tEnter"));
 						AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, app.LocaleString (IDS_OPENRULESEDITOR, L"..."));
+						AppendMenu (hmenu, MF_STRING, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L"\tCtrl+X"));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, nullptr);
 						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, app.LocaleString (IDS_SELECT_ALL, L"\tCtrl+A"));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, nullptr);
