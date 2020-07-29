@@ -38,7 +38,7 @@ THREAD_FN ApplyThread (PVOID lparam)
 	_app_restoreinterfacestate (pcontext->hwnd, TRUE);
 	_app_setinterfacestate (pcontext->hwnd);
 
-	_app_profile_save (NULL);
+	_app_profile_save ();
 
 	SetEvent (config.done_evt);
 
@@ -51,59 +51,71 @@ THREAD_FN ApplyThread (PVOID lparam)
 
 THREAD_FN NetworkMonitorThread (PVOID lparam)
 {
-	DWORD network_timeout = app.ConfigGetUlong (L"NetworkTimeout", NETWORK_TIMEOUT);
+	DWORD network_timeout = _r_config_getulong (L"NetworkTimeout", NETWORK_TIMEOUT);
 
 	if (network_timeout && network_timeout != INFINITE)
 	{
-		HWND hwnd = (HWND)lparam;
-		INT network_listview_id = IDC_NETWORK;
-
 		HASHER_MAP checker_map;
+		PITEM_NETWORK ptr_network;
+		PR_STRING localAddressString;
+		PR_STRING localPortString;
+		PR_STRING remoteAddressString;
+		PR_STRING remotePortString;
+		HWND hwnd;
+		INT network_listview_id;
+		INT current_listview_id;
+		INT item_id;
+		BOOLEAN is_highlighting_enabled;
+		BOOLEAN is_refresh;
+
+		hwnd = (HWND)lparam;
+		network_listview_id = IDC_NETWORK;
 
 		network_timeout = _r_calc_clamp (DWORD, network_timeout, 500, 60 * 1000); // set allowed range
 
 		while (TRUE)
 		{
-			_app_generate_connections (network_map, checker_map);
+			_app_generate_connections (&network_map, &checker_map);
 
-			BOOLEAN is_highlighting_enabled = app.ConfigGetBoolean (L"IsEnableHighlighting", TRUE) && app.ConfigGetBoolean (L"IsHighlightConnection", TRUE, L"colors");
-			INT current_listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
-			BOOLEAN is_refresh = FALSE;
+			is_highlighting_enabled = _r_config_getboolean (L"IsEnableHighlighting", TRUE) && _r_config_getboolean (L"IsHighlightConnection", TRUE, L"colors");
+			current_listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
+			is_refresh = FALSE;
 
 			// add new connections into list
-			for (auto &p : network_map)
+			for (auto it = network_map.begin (); it != network_map.end (); ++it)
 			{
-				if (checker_map.find (p.first) == checker_map.end () || !checker_map[p.first])
+				if (!it->second)
 					continue;
 
-				PITEM_NETWORK ptr_network = (PITEM_NETWORK)_r_obj_reference (p.second);
-
-				if (!ptr_network)
+				if (checker_map.find (it->first) == checker_map.end () || !checker_map.at (it->first))
 					continue;
 
-				LPWSTR local_fmt = NULL;
-				LPWSTR remote_fmt = NULL;
+				ptr_network = (PITEM_NETWORK)_r_obj_reference (it->second);
 
-				_app_formataddress (ptr_network->af, 0, &ptr_network->local_addr, 0, &local_fmt, 0);
-				_app_formataddress (ptr_network->af, 0, &ptr_network->remote_addr, 0, &remote_fmt, 0);
+				localAddressString = _app_formataddress (ptr_network->af, 0, &ptr_network->local_addr, 0, 0);
+				localPortString = _app_formatport (ptr_network->local_port, TRUE);
+				remoteAddressString = _app_formataddress (ptr_network->af, 0, &ptr_network->remote_addr, 0, 0);
+				remotePortString = _app_formatport (ptr_network->remote_port, TRUE);
 
-				INT item_id = _r_listview_getitemcount (hwnd, network_listview_id, FALSE);
+				item_id = _r_listview_getitemcount (hwnd, network_listview_id, FALSE);
 
-				_r_listview_additem (hwnd, network_listview_id, item_id, 0, _r_path_getfilename (ptr_network->path), ptr_network->icon_id, I_GROUPIDNONE, p.first);
+				_r_listview_additemex (hwnd, network_listview_id, item_id, 0, _r_path_getbasename (_r_obj_getstring (ptr_network->path)), ptr_network->icon_id, _app_getnetworkgroup (ptr_network), it->first);
 
-				_r_listview_setitem (hwnd, network_listview_id, item_id, 1, !_r_str_isempty (local_fmt) ? local_fmt : SZ_EMPTY);
-				_r_listview_setitem (hwnd, network_listview_id, item_id, 3, !_r_str_isempty (remote_fmt) ? remote_fmt : SZ_EMPTY);
-				_r_listview_setitem (hwnd, network_listview_id, item_id, 5, _app_getprotoname (ptr_network->protocol, ptr_network->af, NULL).GetString ());
-				_r_listview_setitem (hwnd, network_listview_id, item_id, 6, _app_getconnectionstatusname (ptr_network->state, NULL).GetString ());
+				_r_listview_setitem (hwnd, network_listview_id, item_id, 1, _r_obj_getstringordefault (localAddressString, SZ_EMPTY));
+				_r_listview_setitem (hwnd, network_listview_id, item_id, 3, _r_obj_getstringordefault (remoteAddressString, SZ_EMPTY));
+				_r_listview_setitem (hwnd, network_listview_id, item_id, 5, _app_getprotoname (ptr_network->protocol, ptr_network->af, SZ_EMPTY));
+				_r_listview_setitem (hwnd, network_listview_id, item_id, 6, _app_getconnectionstatusname (ptr_network->state, NULL));
 
-				if (ptr_network->local_port)
-					_r_listview_setitem (hwnd, network_listview_id, item_id, 2, _app_formatport (ptr_network->local_port, TRUE).GetString ());
+				if (localPortString)
+					_r_listview_setitem (hwnd, network_listview_id, item_id, 2, _r_obj_getstringorempty (localPortString));
 
-				if (ptr_network->remote_port)
-					_r_listview_setitem (hwnd, network_listview_id, item_id, 4, _app_formatport (ptr_network->remote_port, TRUE).GetString ());
+				if (remotePortString)
+					_r_listview_setitem (hwnd, network_listview_id, item_id, 4, _r_obj_getstringorempty (remotePortString));
 
-				SAFE_DELETE_MEMORY (local_fmt);
-				SAFE_DELETE_MEMORY (remote_fmt);
+				SAFE_DELETE_REFERENCE (localAddressString);
+				SAFE_DELETE_REFERENCE (localPortString);
+				SAFE_DELETE_REFERENCE (remoteAddressString);
+				SAFE_DELETE_REFERENCE (remotePortString);
 
 				// redraw listview item
 				if (is_highlighting_enabled)
@@ -131,6 +143,8 @@ THREAD_FN NetworkMonitorThread (PVOID lparam)
 				{
 					SendDlgItemMessage (hwnd, network_listview_id, WM_SETREDRAW, FALSE, 0);
 
+					_app_refreshgroups (hwnd, network_listview_id);
+
 					_app_listviewsort (hwnd, network_listview_id, INVALID_INT, FALSE);
 					_app_listviewresize (hwnd, network_listview_id, FALSE);
 
@@ -152,7 +166,7 @@ THREAD_FN NetworkMonitorThread (PVOID lparam)
 
 					SendDlgItemMessage (hwnd, network_listview_id, LVM_DELETEITEM, (WPARAM)i, 0);
 
-					PITEM_NETWORK ptr_network = _app_getnetworkitem (network_hash);
+					ptr_network = _app_getnetworkitem (network_hash);
 
 					// redraw listview item
 					if (ptr_network)
@@ -197,7 +211,7 @@ BOOLEAN _app_changefilters (HWND hwnd, BOOLEAN is_install, BOOLEAN is_forced)
 	{
 		_app_initinterfacestate (hwnd, TRUE);
 
-		_app_freethreadpool (threads_pool);
+		_app_freethreadpool (&threads_pool);
 
 		PITEM_CONTEXT pcontext = (PITEM_CONTEXT)_r_mem_allocatezero (sizeof (ITEM_CONTEXT));
 
@@ -212,39 +226,39 @@ BOOLEAN _app_changefilters (HWND hwnd, BOOLEAN is_install, BOOLEAN is_forced)
 			return FALSE;
 		}
 
-		threads_pool.push_back (hthread);
+		threads_pool.emplace_back (hthread);
 		_r_sys_resumethread (hthread);
 
 		return TRUE;
 	}
 
-	_app_profile_save (NULL);
+	_app_profile_save ();
 
 	_r_listview_redraw (hwnd, listview_id, INVALID_INT);
 
 	return FALSE;
 }
 
-VOID addcolor (UINT locale_id, LPCWSTR config_name, BOOLEAN is_enabled, LPCWSTR config_value, COLORREF default_clr)
+VOID addcolor (UINT locale_id, LPCWSTR configName, BOOLEAN is_enabled, LPCWSTR configValue, COLORREF default_clr)
 {
 	PITEM_COLOR ptr_clr = (PITEM_COLOR)_r_mem_allocatezero (sizeof (ITEM_COLOR));
 
-	if (!_r_str_isempty (config_name))
-		_r_str_alloc (&ptr_clr->pcfg_name, _r_str_length (config_name), config_name);
+	if (!_r_str_isempty (configName))
+		ptr_clr->configName = _r_obj_createstring (configName);
 
-	if (!_r_str_isempty (config_value))
+	if (!_r_str_isempty (configValue))
 	{
-		_r_str_alloc (&ptr_clr->pcfg_value, _r_str_length (config_value), config_value);
+		ptr_clr->configValue = _r_obj_createstring (configValue);
 
-		ptr_clr->clr_hash = _r_str_hash (config_value);
-		ptr_clr->new_clr = app.ConfigGetUlong (config_value, default_clr, L"colors");
+		ptr_clr->hash = _r_str_hash (configValue);
+		ptr_clr->new_clr = _r_config_getulong (configValue, default_clr, L"colors");
 	}
 
 	ptr_clr->default_clr = default_clr;
 	ptr_clr->locale_id = locale_id;
 	ptr_clr->is_enabled = is_enabled;
 
-	colors.push_back (ptr_clr);
+	colors.emplace_back (ptr_clr);
 }
 
 BOOLEAN _app_installmessage (HWND hwnd, BOOLEAN is_install)
@@ -286,13 +300,13 @@ BOOLEAN _app_installmessage (HWND hwnd, BOOLEAN is_install)
 	td_buttons[1].nButtonID = IDNO;
 	td_buttons[1].pszButtonText = str_button_text_2;
 
-	_r_str_copy (str_button_text_1, RTL_NUMBER_OF (str_button_text_1), app.LocaleString (is_install ? IDS_TRAY_START : IDS_TRAY_STOP, NULL).GetString ());
-	_r_str_copy (str_button_text_2, RTL_NUMBER_OF (str_button_text_2), app.LocaleString (IDS_CLOSE, NULL).GetString ());
+	_r_str_copy (str_button_text_1, RTL_NUMBER_OF (str_button_text_1), _r_locale_getstring (is_install ? IDS_TRAY_START : IDS_TRAY_STOP));
+	_r_str_copy (str_button_text_2, RTL_NUMBER_OF (str_button_text_2), _r_locale_getstring (IDS_CLOSE));
 
 	if (is_install)
 	{
-		_r_str_copy (str_main, RTL_NUMBER_OF (str_main), app.LocaleString (IDS_QUESTION_START, NULL).GetString ());
-		_r_str_copy (str_flag, RTL_NUMBER_OF (str_flag), app.LocaleString (IDS_DISABLEWINDOWSFIREWALL_CHK, NULL).GetString ());
+		_r_str_copy (str_main, RTL_NUMBER_OF (str_main), _r_locale_getstring (IDS_QUESTION_START));
+		_r_str_copy (str_flag, RTL_NUMBER_OF (str_flag), _r_locale_getstring (IDS_DISABLEWINDOWSFIREWALL_CHK));
 
 		tdc.pRadioButtons = td_radios;
 		tdc.cRadioButtons = RTL_NUMBER_OF (td_radios);
@@ -305,18 +319,18 @@ BOOLEAN _app_installmessage (HWND hwnd, BOOLEAN is_install)
 		td_radios[1].nButtonID = IDNO;
 		td_radios[1].pszButtonText = radio_text_2;
 
-		_r_str_copy (radio_text_1, RTL_NUMBER_OF (radio_text_1), app.LocaleString (IDS_INSTALL_PERMANENT, NULL).GetString ());
-		_r_str_copy (radio_text_2, RTL_NUMBER_OF (radio_text_2), app.LocaleString (IDS_INSTALL_TEMPORARY, NULL).GetString ());
+		_r_str_copy (radio_text_1, RTL_NUMBER_OF (radio_text_1), _r_locale_getstring (IDS_INSTALL_PERMANENT));
+		_r_str_copy (radio_text_2, RTL_NUMBER_OF (radio_text_2), _r_locale_getstring (IDS_INSTALL_TEMPORARY));
 
-		if (app.ConfigGetBoolean (L"IsDisableWindowsFirewallChecked", TRUE))
+		if (_r_config_getboolean (L"IsDisableWindowsFirewallChecked", TRUE))
 			tdc.dwFlags |= TDF_VERIFICATION_FLAG_CHECKED;
 	}
 	else
 	{
-		_r_str_copy (str_main, RTL_NUMBER_OF (str_main), app.LocaleString (IDS_QUESTION_STOP, NULL).GetString ());
-		_r_str_copy (str_flag, RTL_NUMBER_OF (str_flag), app.LocaleString (IDS_ENABLEWINDOWSFIREWALL_CHK, NULL).GetString ());
+		_r_str_copy (str_main, RTL_NUMBER_OF (str_main), _r_locale_getstring (IDS_QUESTION_STOP));
+		_r_str_copy (str_flag, RTL_NUMBER_OF (str_flag), _r_locale_getstring (IDS_ENABLEWINDOWSFIREWALL_CHK));
 
-		if (app.ConfigGetBoolean (L"IsEnableWindowsFirewallChecked", TRUE))
+		if (_r_config_getboolean (L"IsEnableWindowsFirewallChecked", TRUE))
 			tdc.dwFlags |= TDF_VERIFICATION_FLAG_CHECKED;
 	}
 
@@ -332,14 +346,14 @@ BOOLEAN _app_installmessage (HWND hwnd, BOOLEAN is_install)
 			{
 				config.is_filterstemporary = (radio_id == IDNO);
 
-				app.ConfigSetBoolean (L"IsDisableWindowsFirewallChecked", !!is_flagchecked);
+				_r_config_setboolean (L"IsDisableWindowsFirewallChecked", !!is_flagchecked);
 
 				if (is_flagchecked)
 					_mps_changeconfig2 (FALSE);
 			}
 			else
 			{
-				app.ConfigSetBoolean (L"IsEnableWindowsFirewallChecked", !!is_flagchecked);
+				_r_config_setboolean (L"IsEnableWindowsFirewallChecked", !!is_flagchecked);
 
 				if (is_flagchecked)
 					_mps_changeconfig2 (TRUE);
@@ -361,70 +375,70 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_RULE_BLOCKOUTBOUND:
 		case IDM_RULE_BLOCKOUTBOUND:
 		{
-			new_val = !app.ConfigGetBoolean (L"BlockOutboundConnections", TRUE);
+			new_val = !_r_config_getboolean (L"BlockOutboundConnections", TRUE);
 			break;
 		}
 
 		case IDC_RULE_BLOCKINBOUND:
 		case IDM_RULE_BLOCKINBOUND:
 		{
-			new_val = !app.ConfigGetBoolean (L"BlockInboundConnections", TRUE);
+			new_val = !_r_config_getboolean (L"BlockInboundConnections", TRUE);
 			break;
 		}
 
 		case IDC_RULE_ALLOWLOOPBACK:
 		case IDM_RULE_ALLOWLOOPBACK:
 		{
-			new_val = !app.ConfigGetBoolean (L"AllowLoopbackConnections", TRUE);
+			new_val = !_r_config_getboolean (L"AllowLoopbackConnections", TRUE);
 			break;
 		}
 
 		case IDC_RULE_ALLOW6TO4:
 		case IDM_RULE_ALLOW6TO4:
 		{
-			new_val = !app.ConfigGetBoolean (L"AllowIPv6", TRUE);
+			new_val = !_r_config_getboolean (L"AllowIPv6", TRUE);
 			break;
 		}
 
 		case IDC_SECUREFILTERS_CHK:
 		case IDM_SECUREFILTERS_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"IsSecureFilters", TRUE);
+			new_val = !_r_config_getboolean (L"IsSecureFilters", TRUE);
 			break;
 		}
 
 		case IDC_USESTEALTHMODE_CHK:
 		case IDM_USESTEALTHMODE_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"UseStealthMode", TRUE);
+			new_val = !_r_config_getboolean (L"UseStealthMode", TRUE);
 			break;
 		}
 
 		case IDC_INSTALLBOOTTIMEFILTERS_CHK:
 		case IDM_INSTALLBOOTTIMEFILTERS_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"InstallBoottimeFilters", TRUE);
+			new_val = !_r_config_getboolean (L"InstallBoottimeFilters", TRUE);
 			break;
 		}
 
 		case IDC_USENETWORKRESOLUTION_CHK:
 		case IDM_USENETWORKRESOLUTION_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"IsNetworkResolutionsEnabled", FALSE);
+			new_val = !_r_config_getboolean (L"IsNetworkResolutionsEnabled", FALSE);
 			break;
 		}
 
 		case IDC_USECERTIFICATES_CHK:
 		case IDM_USECERTIFICATES_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"IsCertificatesEnabled", FALSE);
+			new_val = !_r_config_getboolean (L"IsCertificatesEnabled", FALSE);
 			break;
 		}
 
 		case IDC_USEREFRESHDEVICES_CHK:
 		case IDM_USEREFRESHDEVICES_CHK:
 		{
-			new_val = !app.ConfigGetBoolean (L"IsRefreshDevices", TRUE);
+			new_val = !_r_config_getboolean (L"IsRefreshDevices", TRUE);
 			break;
 		}
 
@@ -441,7 +455,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_RULE_BLOCKOUTBOUND:
 		case IDM_RULE_BLOCKOUTBOUND:
 		{
-			app.ConfigSetBoolean (L"BlockOutboundConnections", new_val);
+			_r_config_setboolean (L"BlockOutboundConnections", new_val);
 			_r_menu_checkitem (hmenu, IDM_RULE_BLOCKOUTBOUND, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -450,7 +464,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_RULE_BLOCKINBOUND:
 		case IDM_RULE_BLOCKINBOUND:
 		{
-			app.ConfigSetBoolean (L"BlockInboundConnections", new_val);
+			_r_config_setboolean (L"BlockInboundConnections", new_val);
 			_r_menu_checkitem (hmenu, IDM_RULE_BLOCKINBOUND, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -459,7 +473,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_RULE_ALLOWLOOPBACK:
 		case IDM_RULE_ALLOWLOOPBACK:
 		{
-			app.ConfigSetBoolean (L"AllowLoopbackConnections", new_val);
+			_r_config_setboolean (L"AllowLoopbackConnections", new_val);
 			_r_menu_checkitem (hmenu, IDM_RULE_ALLOWLOOPBACK, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -468,7 +482,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_RULE_ALLOW6TO4:
 		case IDM_RULE_ALLOW6TO4:
 		{
-			app.ConfigSetBoolean (L"AllowIPv6", new_val);
+			_r_config_setboolean (L"AllowIPv6", new_val);
 			_r_menu_checkitem (hmenu, IDM_RULE_ALLOW6TO4, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -477,7 +491,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_USESTEALTHMODE_CHK:
 		case IDM_USESTEALTHMODE_CHK:
 		{
-			app.ConfigSetBoolean (L"UseStealthMode", new_val);
+			_r_config_setboolean (L"UseStealthMode", new_val);
 			_r_menu_checkitem (hmenu, IDM_USESTEALTHMODE_CHK, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -486,7 +500,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_SECUREFILTERS_CHK:
 		case IDM_SECUREFILTERS_CHK:
 		{
-			app.ConfigSetBoolean (L"IsSecureFilters", new_val);
+			_r_config_setboolean (L"IsSecureFilters", new_val);
 			_r_menu_checkitem (hmenu, IDM_SECUREFILTERS_CHK, 0, MF_BYCOMMAND, new_val);
 
 			HANDLE hengine = _wfp_getenginehandle ();
@@ -500,8 +514,8 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 
 				if (_wfp_dumpfilters (hengine, &GUID_WfpProvider, &filter_all))
 				{
-					for (auto &filter_id : filter_all)
-						_app_setsecurityinfoforfilter (hengine, &filter_id, new_val, __LINE__);
+					for (auto it = filter_all.begin (); it != filter_all.end (); ++it)
+						_app_setsecurityinfoforfilter (hengine, &(*it), new_val, __LINE__);
 				}
 			}
 
@@ -511,7 +525,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_INSTALLBOOTTIMEFILTERS_CHK:
 		case IDM_INSTALLBOOTTIMEFILTERS_CHK:
 		{
-			app.ConfigSetBoolean (L"InstallBoottimeFilters", new_val);
+			_r_config_setboolean (L"InstallBoottimeFilters", new_val);
 			_r_menu_checkitem (hmenu, IDM_INSTALLBOOTTIMEFILTERS_CHK, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -520,7 +534,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_USENETWORKRESOLUTION_CHK:
 		case IDM_USENETWORKRESOLUTION_CHK:
 		{
-			app.ConfigSetBoolean (L"IsNetworkResolutionsEnabled", new_val);
+			_r_config_setboolean (L"IsNetworkResolutionsEnabled", new_val);
 			_r_menu_checkitem (hmenu, IDM_USENETWORKRESOLUTION_CHK, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -529,33 +543,32 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_USECERTIFICATES_CHK:
 		case IDM_USECERTIFICATES_CHK:
 		{
-			app.ConfigSetBoolean (L"IsCertificatesEnabled", new_val);
+			_r_config_setboolean (L"IsCertificatesEnabled", new_val);
 			_r_menu_checkitem (hmenu, IDM_USECERTIFICATES_CHK, 0, MF_BYCOMMAND, new_val);
 
 			if (new_val)
 			{
-				for (auto &p : apps)
-				{
-					PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
+				PR_STRING signatureString;
+				PITEM_APP ptr_app;
+				SIZE_T app_hash;
 
-					if (!ptr_app_object)
+				for (auto it = apps.begin (); it != apps.end (); ++it)
+				{
+					if (!it->second)
 						continue;
 
-					PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+					app_hash = it->first;
+					ptr_app = (PITEM_APP)_r_obj_reference (it->second);
 
-					if (ptr_app)
-					{
-						PR_OBJECT ptr_signature_object = _app_getsignatureinfo (p.first, ptr_app);
+					signatureString = _app_getsignatureinfo (app_hash, ptr_app);
 
-						if (ptr_signature_object)
-							_r_obj2_dereference (ptr_signature_object);
-					}
+					SAFE_DELETE_REFERENCE (signatureString);
 
-					_r_obj2_dereference (ptr_app_object);
+					_r_obj_dereference (ptr_app);
 				}
 			}
 
-			_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT), INVALID_INT);
+			_r_listview_redraw (_r_app_gethwnd (), (INT)_r_tab_getlparam (_r_app_gethwnd (), IDC_TAB, INVALID_INT), INVALID_INT);
 
 			break;
 		}
@@ -563,7 +576,7 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		case IDC_USEREFRESHDEVICES_CHK:
 		case IDM_USEREFRESHDEVICES_CHK:
 		{
-			app.ConfigSetBoolean (L"IsRefreshDevices", new_val);
+			_r_config_setboolean (L"IsRefreshDevices", new_val);
 			_r_menu_checkitem (hmenu, IDM_USEREFRESHDEVICES_CHK, 0, MF_BYCOMMAND, new_val);
 
 			break;
@@ -597,9 +610,9 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 	{
 		case WM_INITDIALOG:
 		{
-#ifndef _APP_NO_DARKTHEME
+#if defined(_APP_HAVE_DARKTHEME)
 			_r_wnd_setdarktheme (hwnd);
-#endif // _APP_NO_DARKTHEME
+#endif // _APP_HAVE_DARKTHEME
 
 			break;
 		}
@@ -612,63 +625,63 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 			{
 				case IDD_SETTINGS_GENERAL:
 				{
-					CheckDlgButton (hwnd, IDC_ALWAYSONTOP_CHK, app.ConfigGetBoolean (L"AlwaysOnTop", _APP_ALWAYSONTOP) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_ALWAYSONTOP_CHK, _r_config_getboolean (L"AlwaysOnTop", _APP_ALWAYSONTOP) ? BST_CHECKED : BST_UNCHECKED);
 
 #if defined(_APP_HAVE_AUTORUN)
-					CheckDlgButton (hwnd, IDC_LOADONSTARTUP_CHK, app.AutorunIsEnabled () ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_LOADONSTARTUP_CHK, _r_autorun_isenabled () ? BST_CHECKED : BST_UNCHECKED);
 #endif // _APP_HAVE_AUTORUN
 
-					CheckDlgButton (hwnd, IDC_STARTMINIMIZED_CHK, app.ConfigGetBoolean (L"IsStartMinimized", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_STARTMINIMIZED_CHK, _r_config_getboolean (L"IsStartMinimized", FALSE) ? BST_CHECKED : BST_UNCHECKED);
 
 #if defined(_APP_HAVE_SKIPUAC)
-					CheckDlgButton (hwnd, IDC_SKIPUACWARNING_CHK, app.SkipUacIsEnabled () ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_SKIPUACWARNING_CHK, _r_skipuac_isenabled () ? BST_CHECKED : BST_UNCHECKED);
 #endif // _APP_HAVE_SKIPUAC
 
-					CheckDlgButton (hwnd, IDC_CHECKUPDATES_CHK, app.ConfigGetBoolean (L"CheckUpdates", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_CHECKUPDATES_CHK, _r_config_getboolean (L"CheckUpdates", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
 #if defined(_DEBUG) || defined(_APP_BETA)
 					CheckDlgButton (hwnd, IDC_CHECKUPDATESBETA_CHK, BST_CHECKED);
 					_r_ctrl_enable (hwnd, IDC_CHECKUPDATESBETA_CHK, FALSE);
 #else
-					CheckDlgButton (hwnd, IDC_CHECKUPDATESBETA_CHK, app.ConfigGetBoolean (L"CheckUpdatesBeta", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_CHECKUPDATESBETA_CHK, _r_config_getboolean (L"CheckUpdatesBeta", FALSE) ? BST_CHECKED : BST_UNCHECKED);
 
-					if (!app.ConfigGetBoolean (L"CheckUpdates", TRUE))
+					if (!_r_config_getboolean (L"CheckUpdates", TRUE))
 						_r_ctrl_enable (hwnd, IDC_CHECKUPDATESBETA_CHK, FALSE);
 #endif // _DEBUG || _APP_BETA
 
-					app.LocaleEnum (hwnd, IDC_LANGUAGE, FALSE, 0);
+					_r_locale_enum (hwnd, IDC_LANGUAGE, 0);
 
 					break;
 				}
 
 				case IDD_SETTINGS_RULES:
 				{
-					CheckDlgButton (hwnd, IDC_RULE_BLOCKOUTBOUND, app.ConfigGetBoolean (L"BlockOutboundConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_RULE_BLOCKINBOUND, app.ConfigGetBoolean (L"BlockInboundConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_RULE_BLOCKOUTBOUND, _r_config_getboolean (L"BlockOutboundConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_RULE_BLOCKINBOUND, _r_config_getboolean (L"BlockInboundConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
-					CheckDlgButton (hwnd, IDC_RULE_ALLOWLOOPBACK, app.ConfigGetBoolean (L"AllowLoopbackConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_RULE_ALLOW6TO4, app.ConfigGetBoolean (L"AllowIPv6", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_RULE_ALLOWLOOPBACK, _r_config_getboolean (L"AllowLoopbackConnections", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_RULE_ALLOW6TO4, _r_config_getboolean (L"AllowIPv6", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
-					CheckDlgButton (hwnd, IDC_SECUREFILTERS_CHK, app.ConfigGetBoolean (L"IsSecureFilters", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_USESTEALTHMODE_CHK, app.ConfigGetBoolean (L"UseStealthMode", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, app.ConfigGetBoolean (L"InstallBoottimeFilters", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_SECUREFILTERS_CHK, _r_config_getboolean (L"IsSecureFilters", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_USESTEALTHMODE_CHK, _r_config_getboolean (L"UseStealthMode", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, _r_config_getboolean (L"InstallBoottimeFilters", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
-					CheckDlgButton (hwnd, IDC_USECERTIFICATES_CHK, app.ConfigGetBoolean (L"IsCertificatesEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_USENETWORKRESOLUTION_CHK, app.ConfigGetBoolean (L"IsNetworkResolutionsEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_USEREFRESHDEVICES_CHK, app.ConfigGetBoolean (L"IsRefreshDevices", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_USECERTIFICATES_CHK, _r_config_getboolean (L"IsCertificatesEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_USENETWORKRESOLUTION_CHK, _r_config_getboolean (L"IsNetworkResolutionsEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_USEREFRESHDEVICES_CHK, _r_config_getboolean (L"IsRefreshDevices", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
 					HWND htip = _r_ctrl_createtip (hwnd);
 
 					if (htip)
 					{
-						_r_ctrl_settip (htip, hwnd, IDC_RULE_BLOCKOUTBOUND, LPSTR_TEXTCALLBACK);
-						_r_ctrl_settip (htip, hwnd, IDC_RULE_BLOCKINBOUND, LPSTR_TEXTCALLBACK);
-						_r_ctrl_settip (htip, hwnd, IDC_RULE_ALLOWLOOPBACK, LPSTR_TEXTCALLBACK);
-						_r_ctrl_settip (htip, hwnd, IDC_RULE_ALLOW6TO4, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_RULE_BLOCKOUTBOUND, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_RULE_BLOCKINBOUND, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_RULE_ALLOWLOOPBACK, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_RULE_ALLOW6TO4, LPSTR_TEXTCALLBACK);
 
-						_r_ctrl_settip (htip, hwnd, IDC_USESTEALTHMODE_CHK, LPSTR_TEXTCALLBACK);
-						_r_ctrl_settip (htip, hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, LPSTR_TEXTCALLBACK);
-						_r_ctrl_settip (htip, hwnd, IDC_SECUREFILTERS_CHK, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_USESTEALTHMODE_CHK, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, LPSTR_TEXTCALLBACK);
+						_r_ctrl_settiptext (htip, hwnd, IDC_SECUREFILTERS_CHK, LPSTR_TEXTCALLBACK);
 					}
 
 					break;
@@ -679,18 +692,18 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					for (INT i = IDC_BLOCKLIST_SPY_DISABLE; i <= IDC_BLOCKLIST_EXTRA_BLOCK; i++)
 						CheckDlgButton (hwnd, i, BST_UNCHECKED); // HACK!!! reset button checkboxes!
 
-					CheckDlgButton (hwnd, (IDC_BLOCKLIST_SPY_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistSpyState", 2), 0, 2)), BST_CHECKED);
-					CheckDlgButton (hwnd, (IDC_BLOCKLIST_UPDATE_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistUpdateState", 0), 0, 2)), BST_CHECKED);
-					CheckDlgButton (hwnd, (IDC_BLOCKLIST_EXTRA_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistExtraState", 0), 0, 2)), BST_CHECKED);
+					CheckDlgButton (hwnd, (IDC_BLOCKLIST_SPY_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistSpyState", 2), 0, 2)), BST_CHECKED);
+					CheckDlgButton (hwnd, (IDC_BLOCKLIST_UPDATE_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistUpdateState", 0), 0, 2)), BST_CHECKED);
+					CheckDlgButton (hwnd, (IDC_BLOCKLIST_EXTRA_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistExtraState", 0), 0, 2)), BST_CHECKED);
 
 					break;
 				}
 
 				case IDD_SETTINGS_INTERFACE:
 				{
-					CheckDlgButton (hwnd, IDC_CONFIRMEXIT_CHK, app.ConfigGetBoolean (L"ConfirmExit2", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_CONFIRMEXITTIMER_CHK, app.ConfigGetBoolean (L"ConfirmExitTimer", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_CONFIRMLOGCLEAR_CHK, app.ConfigGetBoolean (L"ConfirmLogClear", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_CONFIRMEXIT_CHK, _r_config_getboolean (L"ConfirmExit2", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_CONFIRMEXITTIMER_CHK, _r_config_getboolean (L"ConfirmExitTimer", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_CONFIRMLOGCLEAR_CHK, _r_config_getboolean (L"ConfirmLogClear", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
 					break;
 				}
@@ -708,15 +721,17 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					_r_listview_addcolumn (hwnd, IDC_COLORS, 0, L"", 0, LVCFMT_LEFT);
 
 					INT item = 0;
+					PITEM_COLOR ptr_clr;
 
-					for (auto &ptr_clr : colors)
+					for (auto it = colors.begin (); it != colors.end (); ++it)
 					{
-						ptr_clr->new_clr = app.ConfigGetUlong (ptr_clr->pcfg_value, ptr_clr->default_clr, L"colors");
+						ptr_clr = *it;
+						ptr_clr->new_clr = _r_config_getulong (_r_obj_getstring (ptr_clr->configValue), ptr_clr->default_clr, L"colors");
 
 						_r_fastlock_acquireshared (&lock_checkbox);
 
-						_r_listview_additem (hwnd, IDC_COLORS, item, 0, app.LocaleString (ptr_clr->locale_id, NULL).GetString (), config.icon_id, I_GROUPIDNONE, (LPARAM)ptr_clr);
-						_r_listview_setitemcheck (hwnd, IDC_COLORS, item, app.ConfigGetBoolean (ptr_clr->pcfg_name, ptr_clr->is_enabled, L"colors"));
+						_r_listview_additemex (hwnd, IDC_COLORS, item, 0, _r_locale_getstring (ptr_clr->locale_id), config.icon_id, I_GROUPIDNONE, (LPARAM)ptr_clr);
+						_r_listview_setitemcheck (hwnd, IDC_COLORS, item, _r_config_getboolean (_r_obj_getstring (ptr_clr->configName), ptr_clr->is_enabled, L"colors"));
 
 						_r_fastlock_releaseshared (&lock_checkbox);
 
@@ -728,15 +743,16 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 				case IDD_SETTINGS_NOTIFICATIONS:
 				{
-					CheckDlgButton (hwnd, IDC_ENABLENOTIFICATIONS_CHK, app.ConfigGetBoolean (L"IsNotificationsEnabled", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_NOTIFICATIONSOUND_CHK, app.ConfigGetBoolean (L"IsNotificationsSound", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_NOTIFICATIONONTRAY_CHK, app.ConfigGetBoolean (L"IsNotificationsOnTray", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_ENABLENOTIFICATIONS_CHK, _r_config_getboolean (L"IsNotificationsEnabled", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_NOTIFICATIONSOUND_CHK, _r_config_getboolean (L"IsNotificationsSound", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_NOTIFICATIONFULLSCREENSILENTMODE_CHK, _r_config_getboolean (L"IsNotificationsFullscreenSilentMode", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_NOTIFICATIONONTRAY_CHK, _r_config_getboolean (L"IsNotificationsOnTray", FALSE) ? BST_CHECKED : BST_UNCHECKED);
 
 					SendDlgItemMessage (hwnd, IDC_NOTIFICATIONTIMEOUT, UDM_SETRANGE32, 0, _r_calc_days2seconds (LPARAM, 7));
-					SendDlgItemMessage (hwnd, IDC_NOTIFICATIONTIMEOUT, UDM_SETPOS32, 0, (LPARAM)app.ConfigGetUlong (L"NotificationsTimeout", NOTIFY_TIMEOUT_DEFAULT));
+					SendDlgItemMessage (hwnd, IDC_NOTIFICATIONTIMEOUT, UDM_SETPOS32, 0, (LPARAM)_r_config_getulong (L"NotificationsTimeout", NOTIFY_TIMEOUT_DEFAULT));
 
-					CheckDlgButton (hwnd, IDC_EXCLUDEBLOCKLIST_CHK, app.ConfigGetBoolean (L"IsExcludeBlocklist", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_EXCLUDECUSTOM_CHK, app.ConfigGetBoolean (L"IsExcludeCustomRules", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_EXCLUDEBLOCKLIST_CHK, _r_config_getboolean (L"IsExcludeBlocklist", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_EXCLUDECUSTOM_CHK, _r_config_getboolean (L"IsExcludeCustomRules", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
 					PostMessage (hwnd, WM_COMMAND, MAKEWPARAM (IDC_ENABLENOTIFICATIONS_CHK, 0), 0);
 
@@ -745,25 +761,25 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 				case IDD_SETTINGS_LOGGING:
 				{
-					CheckDlgButton (hwnd, IDC_ENABLELOG_CHK, app.ConfigGetBoolean (L"IsLogEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_ENABLELOG_CHK, _r_config_getboolean (L"IsLogEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
 
-					SetDlgItemText (hwnd, IDC_LOGPATH, app.ConfigGetString (L"LogPath", LOG_PATH_DEFAULT).GetString ());
-					SetDlgItemText (hwnd, IDC_LOGVIEWER, app.ConfigGetString (L"LogViewer", LOG_VIEWER_DEFAULT).GetString ());
+					_r_ctrl_settext (hwnd, IDC_LOGPATH, _r_config_getstring (L"LogPath", LOG_PATH_DEFAULT));
+					_r_ctrl_settext (hwnd, IDC_LOGVIEWER, _r_config_getstring (L"LogViewer", LOG_VIEWER_DEFAULT));
 
 					UDACCEL ud = {0};
 					ud.nInc = 64; // set step to 64kb
 
 					SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_SETACCEL, 1, (LPARAM)&ud);
 					SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_SETRANGE32, 64, _r_calc_kilobytes2bytes (LPARAM, 512));
-					SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_SETPOS32, 0, (LPARAM)app.ConfigGetUlong (L"LogSizeLimitKb", LOG_SIZE_LIMIT_DEFAULT));
+					SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_SETPOS32, 0, (LPARAM)_r_config_getulong (L"LogSizeLimitKb", LOG_SIZE_LIMIT_DEFAULT));
 
-					CheckDlgButton (hwnd, IDC_ENABLEUILOG_CHK, app.ConfigGetBoolean (L"IsLogUiEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_ENABLEUILOG_CHK, _r_config_getboolean (L"IsLogUiEnabled", FALSE) ? BST_CHECKED : BST_UNCHECKED);
 
-					CheckDlgButton (hwnd, IDC_EXCLUDESTEALTH_CHK, app.ConfigGetBoolean (L"IsExcludeStealth", TRUE) ? BST_CHECKED : BST_UNCHECKED);
-					CheckDlgButton (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, app.ConfigGetBoolean (L"IsExcludeClassifyAllow", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_EXCLUDESTEALTH_CHK, _r_config_getboolean (L"IsExcludeStealth", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+					CheckDlgButton (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, _r_config_getboolean (L"IsExcludeClassifyAllow", TRUE) ? BST_CHECKED : BST_UNCHECKED);
 
 					// win8+
-					if (!_r_sys_validversion (6, 2))
+					if (!_r_sys_isosversiongreaterorequal (WINDOWS_8))
 						_r_ctrl_enable (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, FALSE);
 
 					PostMessage (hwnd, WM_COMMAND, MAKEWPARAM (IDC_ENABLELOG_CHK, 0), 0);
@@ -780,83 +796,90 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 		case RM_LOCALIZE:
 		{
 			INT dialog_id = (INT)wparam;
-			rstring recommended = app.LocaleString (IDS_RECOMMENDED, NULL);
 
 			// localize titles
-			SetDlgItemText (hwnd, IDC_TITLE_GENERAL, app.LocaleString (IDS_TITLE_GENERAL, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_LANGUAGE, app.LocaleString (IDS_TITLE_LANGUAGE, L": (Language)").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_BLOCKLIST_SPY, app.LocaleString (IDS_BLOCKLIST_SPY, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_BLOCKLIST_UPDATE, app.LocaleString (IDS_BLOCKLIST_UPDATE, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_BLOCKLIST_EXTRA, app.LocaleString (IDS_BLOCKLIST_EXTRA, L": (Skype, Bing, Live, Outlook, etc.)").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_CONNECTIONS, app.LocaleString (IDS_TAB_NETWORK, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_SECURITY, app.LocaleString (IDS_TITLE_SECURITY, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_CONFIRMATIONS, app.LocaleString (IDS_TITLE_CONFIRMATIONS, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_HIGHLIGHTING, app.LocaleString (IDS_TITLE_HIGHLIGHTING, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_NOTIFICATIONS, app.LocaleString (IDS_TITLE_NOTIFICATIONS, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_LOGGING, app.LocaleString (IDS_TITLE_LOGGING, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_INTERFACE, app.LocaleString (IDS_TITLE_INTERFACE, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_EXCLUDE, app.LocaleString (IDS_TITLE_EXCLUDE, L":").GetString ());
-			SetDlgItemText (hwnd, IDC_TITLE_ADVANCED, app.LocaleString (IDS_TITLE_ADVANCED, L":").GetString ());
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_GENERAL, L"%s:", _r_locale_getstring (IDS_TITLE_GENERAL));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_LANGUAGE, L"%s: (Language)", _r_locale_getstring (IDS_TITLE_LANGUAGE));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_BLOCKLIST_SPY, L"%s:", _r_locale_getstring (IDS_BLOCKLIST_SPY));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_BLOCKLIST_UPDATE, L"%s:", _r_locale_getstring (IDS_BLOCKLIST_UPDATE));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_BLOCKLIST_EXTRA, L"%s: (Skype, Bing, Live, Outlook, etc.)", _r_locale_getstring (IDS_BLOCKLIST_EXTRA));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_CONNECTIONS, L"%s:", _r_locale_getstring (IDS_TAB_NETWORK));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_SECURITY, L"%s:", _r_locale_getstring (IDS_TITLE_SECURITY));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_CONFIRMATIONS, L"%s:", _r_locale_getstring (IDS_TITLE_CONFIRMATIONS));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_HIGHLIGHTING, L"%s:", _r_locale_getstring (IDS_TITLE_HIGHLIGHTING));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_NOTIFICATIONS, L"%s:", _r_locale_getstring (IDS_TITLE_NOTIFICATIONS));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_LOGGING, L"%s:", _r_locale_getstring (IDS_TITLE_LOGGING));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_INTERFACE, L"%s:", _r_locale_getstring (IDS_TITLE_INTERFACE));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_EXCLUDE, L"%s:", _r_locale_getstring (IDS_TITLE_EXCLUDE));
+			_r_ctrl_settextformat (hwnd, IDC_TITLE_ADVANCED, L"%s:", _r_locale_getstring (IDS_TITLE_ADVANCED));
 
 			switch (dialog_id)
 			{
 				case IDD_SETTINGS_GENERAL:
 				{
-					SetDlgItemText (hwnd, IDC_ALWAYSONTOP_CHK, app.LocaleString (IDS_ALWAYSONTOP_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_LOADONSTARTUP_CHK, app.LocaleString (IDS_LOADONSTARTUP_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_STARTMINIMIZED_CHK, app.LocaleString (IDS_STARTMINIMIZED_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_SKIPUACWARNING_CHK, app.LocaleString (IDS_SKIPUACWARNING_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_CHECKUPDATES_CHK, app.LocaleString (IDS_CHECKUPDATES_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_CHECKUPDATESBETA_CHK, app.LocaleString (IDS_CHECKUPDATESBETA_CHK, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_ALWAYSONTOP_CHK, _r_locale_getstring (IDS_ALWAYSONTOP_CHK));
+					_r_ctrl_settext (hwnd, IDC_LOADONSTARTUP_CHK, _r_locale_getstring (IDS_LOADONSTARTUP_CHK));
+					_r_ctrl_settext (hwnd, IDC_STARTMINIMIZED_CHK, _r_locale_getstring (IDS_STARTMINIMIZED_CHK));
+					_r_ctrl_settext (hwnd, IDC_SKIPUACWARNING_CHK, _r_locale_getstring (IDS_SKIPUACWARNING_CHK));
+					_r_ctrl_settext (hwnd, IDC_CHECKUPDATES_CHK, _r_locale_getstring (IDS_CHECKUPDATES_CHK));
+					_r_ctrl_settext (hwnd, IDC_CHECKUPDATESBETA_CHK, _r_locale_getstring (IDS_CHECKUPDATESBETA_CHK));
 
-					SetDlgItemText (hwnd, IDC_LANGUAGE_HINT, app.LocaleString (IDS_LANGUAGE_HINT, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_LANGUAGE_HINT, _r_locale_getstring (IDS_LANGUAGE_HINT));
 
 					break;
 				}
 
 				case IDD_SETTINGS_RULES:
 				{
-					SetDlgItemText (hwnd, IDC_RULE_BLOCKOUTBOUND, app.LocaleString (IDS_RULE_BLOCKOUTBOUND, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_RULE_BLOCKINBOUND, app.LocaleString (IDS_RULE_BLOCKINBOUND, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
+					LPCWSTR recommendedString = _r_locale_getstring (IDS_RECOMMENDED);
 
-					SetDlgItemText (hwnd, IDC_RULE_ALLOWLOOPBACK, app.LocaleString (IDS_RULE_ALLOWLOOPBACK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_RULE_ALLOW6TO4, app.LocaleString (IDS_RULE_ALLOW6TO4, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_RULE_BLOCKOUTBOUND, L"%s (%s)", _r_locale_getstring (IDS_RULE_BLOCKOUTBOUND), recommendedString);
+					_r_ctrl_settextformat (hwnd, IDC_RULE_BLOCKINBOUND, L"%s (%s)", _r_locale_getstring (IDS_RULE_BLOCKINBOUND), recommendedString);
 
-					SetDlgItemText (hwnd, IDC_SECUREFILTERS_CHK, app.LocaleString (IDS_SECUREFILTERS_CHK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_USESTEALTHMODE_CHK, app.LocaleString (IDS_USESTEALTHMODE_CHK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, app.LocaleString (IDS_INSTALLBOOTTIMEFILTERS_CHK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_RULE_ALLOWLOOPBACK, L"%s (%s)", _r_locale_getstring (IDS_RULE_ALLOWLOOPBACK), recommendedString);
+					_r_ctrl_settextformat (hwnd, IDC_RULE_ALLOW6TO4, L"%s (%s)", _r_locale_getstring (IDS_RULE_ALLOW6TO4), recommendedString);
 
-					SetDlgItemText (hwnd, IDC_USENETWORKRESOLUTION_CHK, app.LocaleString (IDS_USENETWORKRESOLUTION_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_USECERTIFICATES_CHK, app.LocaleString (IDS_USECERTIFICATES_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_USEREFRESHDEVICES_CHK, app.LocaleString (IDS_USEREFRESHDEVICES_CHK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_SECUREFILTERS_CHK, L"%s (%s)", _r_locale_getstring (IDS_SECUREFILTERS_CHK), recommendedString);
+					_r_ctrl_settextformat (hwnd, IDC_USESTEALTHMODE_CHK, L"%s (%s)", _r_locale_getstring (IDS_USESTEALTHMODE_CHK), recommendedString);
+					_r_ctrl_settextformat (hwnd, IDC_INSTALLBOOTTIMEFILTERS_CHK, L"%s (%s)", _r_locale_getstring (IDS_INSTALLBOOTTIMEFILTERS_CHK), recommendedString);
+
+					_r_ctrl_settext (hwnd, IDC_USENETWORKRESOLUTION_CHK, _r_locale_getstring (IDS_USENETWORKRESOLUTION_CHK));
+					_r_ctrl_settext (hwnd, IDC_USECERTIFICATES_CHK, _r_locale_getstring (IDS_USECERTIFICATES_CHK));
+					_r_ctrl_settextformat (hwnd, IDC_USEREFRESHDEVICES_CHK, L"%s (%s)", _r_locale_getstring (IDS_USEREFRESHDEVICES_CHK), recommendedString);
 
 					break;
 				}
 
 				case IDD_SETTINGS_BLOCKLIST:
 				{
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_SPY_DISABLE, app.LocaleString (IDS_DISABLE, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_SPY_ALLOW, app.LocaleString (IDS_ACTION_ALLOW, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_SPY_BLOCK, app.LocaleString (IDS_ACTION_BLOCK, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
+					LPCWSTR recommendedString = _r_locale_getstring (IDS_RECOMMENDED);
 
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_UPDATE_DISABLE, app.LocaleString (IDS_DISABLE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_UPDATE_ALLOW, app.LocaleString (IDS_ACTION_ALLOW, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_UPDATE_BLOCK, app.LocaleString (IDS_ACTION_BLOCK, NULL).GetString ());
+					LPCWSTR disableString = _r_locale_getstring (IDS_DISABLE);
+					LPCWSTR allowString = _r_locale_getstring (IDS_ACTION_ALLOW);
+					LPCWSTR blockString = _r_locale_getstring (IDS_ACTION_BLOCK);
 
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_EXTRA_DISABLE, app.LocaleString (IDS_DISABLE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_EXTRA_ALLOW, app.LocaleString (IDS_ACTION_ALLOW, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_BLOCKLIST_EXTRA_BLOCK, app.LocaleString (IDS_ACTION_BLOCK, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_SPY_DISABLE, disableString);
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_SPY_ALLOW, allowString);
+					_r_ctrl_settextformat (hwnd, IDC_BLOCKLIST_SPY_BLOCK, L"%s (%s)", blockString, recommendedString);
 
-					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_INFO, L"Author: <a href=\"%s\">WindowsSpyBlocker</a> - block spying and tracking on Windows systems.", WINDOWSSPYBLOCKER_URL, WINDOWSSPYBLOCKER_URL);
+					_r_ctrl_settextformat (hwnd, IDC_BLOCKLIST_UPDATE_DISABLE, L"%s (%s)", disableString, recommendedString);
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_UPDATE_ALLOW, allowString);
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_UPDATE_BLOCK, blockString);
+
+					_r_ctrl_settextformat (hwnd, IDC_BLOCKLIST_EXTRA_DISABLE, L"%s (%s)", disableString, recommendedString);
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_EXTRA_ALLOW, allowString);
+					_r_ctrl_settext (hwnd, IDC_BLOCKLIST_EXTRA_BLOCK, blockString);
+
+					_r_ctrl_settextformat (hwnd, IDC_BLOCKLIST_INFO, L"Author: <a href=\"%s\">WindowsSpyBlocker</a> - block spying and tracking on Windows systems.", WINDOWSSPYBLOCKER_URL);
 
 					break;
 				}
 
 				case IDD_SETTINGS_INTERFACE:
 				{
-					SetDlgItemText (hwnd, IDC_CONFIRMEXIT_CHK, app.LocaleString (IDS_CONFIRMEXIT_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_CONFIRMEXITTIMER_CHK, app.LocaleString (IDS_CONFIRMEXITTIMER_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_CONFIRMLOGCLEAR_CHK, app.LocaleString (IDS_CONFIRMLOGCLEAR_CHK, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_CONFIRMEXIT_CHK, _r_locale_getstring (IDS_CONFIRMEXIT_CHK));
+					_r_ctrl_settext (hwnd, IDC_CONFIRMEXITTIMER_CHK, _r_locale_getstring (IDS_CONFIRMEXITTIMER_CHK));
+					_r_ctrl_settext (hwnd, IDC_CONFIRMLOGCLEAR_CHK, _r_locale_getstring (IDS_CONFIRMLOGCLEAR_CHK));
 
 					break;
 				}
@@ -872,49 +895,47 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 						if (ptr_clr)
 						{
 							_r_fastlock_acquireshared (&lock_checkbox);
-							_r_listview_setitem (hwnd, IDC_COLORS, i, 0, app.LocaleString (ptr_clr->locale_id, NULL).GetString ());
+							_r_listview_setitem (hwnd, IDC_COLORS, i, 0, _r_locale_getstring (ptr_clr->locale_id));
 							_r_fastlock_releaseshared (&lock_checkbox);
 						}
 					}
 
-					SetDlgItemText (hwnd, IDC_COLORS_HINT, app.LocaleString (IDS_COLORS_HINT, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_COLORS_HINT, _r_locale_getstring (IDS_COLORS_HINT));
 
 					break;
 				}
 
 				case IDD_SETTINGS_NOTIFICATIONS:
 				{
+					_r_ctrl_settext (hwnd, IDC_ENABLENOTIFICATIONS_CHK, _r_locale_getstring (IDS_ENABLENOTIFICATIONS_CHK));
+					_r_ctrl_settext (hwnd, IDC_NOTIFICATIONSOUND_CHK, _r_locale_getstring (IDS_NOTIFICATIONSOUND_CHK));
+					_r_ctrl_settext (hwnd, IDC_NOTIFICATIONFULLSCREENSILENTMODE_CHK, _r_locale_getstring (IDS_NOTIFICATIONFULLSCREENSILENTMODE_CHK));
+					_r_ctrl_settext (hwnd, IDC_NOTIFICATIONONTRAY_CHK, _r_locale_getstring (IDS_NOTIFICATIONONTRAY_CHK));
 
-					SetDlgItemText (hwnd, IDC_ENABLENOTIFICATIONS_CHK, app.LocaleString (IDS_ENABLENOTIFICATIONS_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_NOTIFICATIONSOUND_CHK, app.LocaleString (IDS_NOTIFICATIONSOUND_CHK, NULL).GetString ());
-					SetDlgItemText (hwnd, IDC_NOTIFICATIONONTRAY_CHK, app.LocaleString (IDS_NOTIFICATIONONTRAY_CHK, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_NOTIFICATIONTIMEOUT_HINT, _r_locale_getstring (IDS_NOTIFICATIONTIMEOUT_HINT));
 
-					SetDlgItemText (hwnd, IDC_NOTIFICATIONTIMEOUT_HINT, app.LocaleString (IDS_NOTIFICATIONTIMEOUT_HINT, NULL).GetString ());
-
-					rstring exclude = app.LocaleString (IDS_TITLE_EXCLUDE, NULL);
-
-					SetDlgItemText (hwnd, IDC_EXCLUDEBLOCKLIST_CHK, _r_fmt (L"%s %s", exclude.GetString (), app.LocaleString (IDS_EXCLUDEBLOCKLIST_CHK, NULL).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_EXCLUDECUSTOM_CHK, _r_fmt (L"%s %s", exclude.GetString (), app.LocaleString (IDS_EXCLUDECUSTOM_CHK, NULL).GetString ()).GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_EXCLUDEBLOCKLIST_CHK, L"%s %s", _r_locale_getstring (IDS_TITLE_EXCLUDE), _r_locale_getstring (IDS_EXCLUDEBLOCKLIST_CHK));
+					_r_ctrl_settextformat (hwnd, IDC_EXCLUDECUSTOM_CHK, L"%s %s", _r_locale_getstring (IDS_TITLE_EXCLUDE), _r_locale_getstring (IDS_EXCLUDECUSTOM_CHK));
 
 					break;
 				}
 
 				case IDD_SETTINGS_LOGGING:
 				{
-					SetDlgItemText (hwnd, IDC_ENABLELOG_CHK, app.LocaleString (IDS_ENABLELOG_CHK, NULL).GetString ());
+					_r_ctrl_settext (hwnd, IDC_ENABLELOG_CHK, _r_locale_getstring (IDS_ENABLELOG_CHK));
 
-					SetDlgItemText (hwnd, IDC_LOGVIEWER_HINT, app.LocaleString (IDS_LOGVIEWER_HINT, L":").GetString ());
-					SetDlgItemText (hwnd, IDC_LOGSIZELIMIT_HINT, app.LocaleString (IDS_LOGSIZELIMIT_HINT, NULL).GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_LOGVIEWER_HINT, L"%s:", _r_locale_getstring (IDS_LOGVIEWER_HINT));
+					_r_ctrl_settext (hwnd, IDC_LOGSIZELIMIT_HINT, _r_locale_getstring (IDS_LOGSIZELIMIT_HINT));
 
-					SetDlgItemText (hwnd, IDC_ENABLEUILOG_CHK, app.LocaleString (IDS_ENABLEUILOG_CHK, L" (session only)").GetString ());
+					_r_ctrl_settextformat (hwnd, IDC_ENABLEUILOG_CHK, L"%s (session only)", _r_locale_getstring (IDS_ENABLEUILOG_CHK));
 
-					rstring exclude = app.LocaleString (IDS_TITLE_EXCLUDE, NULL);
+					_r_ctrl_settextformat (hwnd, IDC_EXCLUDESTEALTH_CHK, L"%s %s", _r_locale_getstring (IDS_TITLE_EXCLUDE), _r_locale_getstring (IDS_EXCLUDESTEALTH_CHK));
+					_r_ctrl_settextformat (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, L"%s %s [win8+]", _r_locale_getstring (IDS_TITLE_EXCLUDE), _r_locale_getstring (IDS_EXCLUDECLASSIFYALLOW_CHK));
 
-					SetDlgItemText (hwnd, IDC_EXCLUDESTEALTH_CHK, _r_fmt (L"%s %s", exclude.GetString (), app.LocaleString (IDS_EXCLUDESTEALTH_CHK, NULL).GetString ()).GetString ());
-					SetDlgItemText (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, _r_fmt (L"%s %s", exclude.GetString (), app.LocaleString (IDS_EXCLUDECLASSIFYALLOW_CHK, (L" [win8+]")).GetString ()).GetString ());
+					BOOLEAN is_classic = _r_app_isclassicui ();
 
-					_r_wnd_addstyle (hwnd, IDC_LOGPATH_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
-					_r_wnd_addstyle (hwnd, IDC_LOGVIEWER_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+					_r_wnd_addstyle (hwnd, IDC_LOGPATH_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+					_r_wnd_addstyle (hwnd, IDC_LOGVIEWER_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
 
 					break;
 				}
@@ -929,10 +950,10 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 			INT ctrl_id = GetDlgCtrlID ((HWND)lparam);
 
 			if (ctrl_id == IDC_LOGSIZELIMIT)
-				app.ConfigSetUlong (L"LogSizeLimitKb", (DWORD)SendDlgItemMessage (hwnd, ctrl_id, UDM_GETPOS32, 0, 0));
+				_r_config_setulong (L"LogSizeLimitKb", (DWORD)SendDlgItemMessage (hwnd, ctrl_id, UDM_GETPOS32, 0, 0));
 
 			else if (ctrl_id == IDC_NOTIFICATIONTIMEOUT)
-				app.ConfigSetUlong (L"NotificationsTimeout", (DWORD)SendDlgItemMessage (hwnd, ctrl_id, UDM_GETPOS32, 0, 0));
+				_r_config_setulong (L"NotificationsTimeout", (DWORD)SendDlgItemMessage (hwnd, ctrl_id, UDM_GETPOS32, 0, 0));
 
 			break;
 		}
@@ -953,22 +974,22 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 						INT ctrl_id = GetDlgCtrlID ((HWND)(lpnmdi->hdr.idFrom));
 
 						if (ctrl_id == IDC_RULE_BLOCKOUTBOUND)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_RULE_BLOCKOUTBOUND, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_RULE_BLOCKOUTBOUND));
 
 						else if (ctrl_id == IDC_RULE_BLOCKINBOUND)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_RULE_BLOCKINBOUND, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_RULE_BLOCKINBOUND));
 
 						else if (ctrl_id == IDC_RULE_ALLOWLOOPBACK)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_RULE_ALLOWLOOPBACK_HINT, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_RULE_ALLOWLOOPBACK_HINT));
 
 						else if (ctrl_id == IDC_USESTEALTHMODE_CHK)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_USESTEALTHMODE_HINT, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_USESTEALTHMODE_HINT));
 
 						else if (ctrl_id == IDC_INSTALLBOOTTIMEFILTERS_CHK)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_INSTALLBOOTTIMEFILTERS_HINT, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_INSTALLBOOTTIMEFILTERS_HINT));
 
 						else if (ctrl_id == IDC_SECUREFILTERS_CHK)
-							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), app.LocaleString (IDS_SECUREFILTERS_HINT, NULL).GetString ());
+							_r_str_copy (buffer, RTL_NUMBER_OF (buffer), _r_locale_getstring (IDS_SECUREFILTERS_HINT));
 
 						if (!_r_str_isempty (buffer))
 							lpnmdi->lpszText = buffer;
@@ -998,9 +1019,9 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 								if (ptr_clr)
 								{
-									app.ConfigSetBoolean (ptr_clr->pcfg_name, is_enabled, L"colors");
+									_r_config_setboolean (_r_obj_getstring (ptr_clr->configName), is_enabled, L"colors");
 
-									_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT), INVALID_INT);
+									_r_listview_redraw (_r_app_gethwnd (), (INT)_r_tab_getlparam (_r_app_gethwnd (), IDC_TAB, INVALID_INT), INVALID_INT);
 								}
 							}
 						}
@@ -1036,11 +1057,12 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 							COLORREF cust[16] = {0};
 
 							SIZE_T index = 0;
+							PITEM_COLOR ptr_clr;
 
-							for (auto &ptr_clr : colors)
+							for (auto it = colors.begin (); it != colors.end (); ++it)
 							{
-								if (ptr_clr)
-									cust[index++] = ptr_clr->default_clr;
+								ptr_clr = *it;
+								cust[index++] = ptr_clr->default_clr;
 							}
 
 							cc.lStructSize = sizeof (cc);
@@ -1052,10 +1074,10 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 							if (ChooseColor (&cc))
 							{
 								ptr_clr_current->new_clr = cc.rgbResult;
-								app.ConfigSetUlong (ptr_clr_current->pcfg_value, cc.rgbResult, L"colors");
+								_r_config_setulong (_r_obj_getstring (ptr_clr_current->configValue), cc.rgbResult, L"colors");
 
 								_r_listview_redraw (hwnd, IDC_COLORS, INVALID_INT);
-								_r_listview_redraw (app.GetHWND (), (INT)_r_tab_getlparam (app.GetHWND (), IDC_TAB, INVALID_INT), INVALID_INT);
+								_r_listview_redraw (_r_app_gethwnd (), (INT)_r_tab_getlparam (_r_app_gethwnd (), IDC_TAB, INVALID_INT), INVALID_INT);
 							}
 						}
 					}
@@ -1079,7 +1101,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					NMLVEMPTYMARKUP* lpnmlv = (NMLVEMPTYMARKUP*)lparam;
 
 					lpnmlv->dwFlags = EMF_CENTERED;
-					_r_str_copy (lpnmlv->szMarkup, RTL_NUMBER_OF (lpnmlv->szMarkup), app.LocaleString (IDS_STATUS_EMPTY, NULL).GetString ());
+					_r_str_copy (lpnmlv->szMarkup, RTL_NUMBER_OF (lpnmlv->szMarkup), _r_locale_getstring (IDS_STATUS_EMPTY));
 
 					SetWindowLongPtr (hwnd, DWLP_MSGRESULT, TRUE);
 					return TRUE;
@@ -1100,8 +1122,8 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					BOOLEAN is_enabled = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
 
-					app.ConfigSetBoolean (L"AlwaysOnTop", is_enabled);
-					_r_menu_checkitem (GetMenu (app.GetHWND ()), IDM_ALWAYSONTOP_CHK, 0, MF_BYCOMMAND, is_enabled);
+					_r_config_setboolean (L"AlwaysOnTop", is_enabled);
+					_r_menu_checkitem (GetMenu (_r_app_gethwnd ()), IDM_ALWAYSONTOP_CHK, 0, MF_BYCOMMAND, is_enabled);
 
 					break;
 				}
@@ -1109,8 +1131,8 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 #if defined(_APP_HAVE_AUTORUN)
 				case IDC_LOADONSTARTUP_CHK:
 				{
-					app.AutorunEnable (hwnd, (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
-					CheckDlgButton (hwnd, ctrl_id, app.AutorunIsEnabled () ? BST_CHECKED : BST_UNCHECKED);
+					_r_autorun_enable (hwnd, (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					CheckDlgButton (hwnd, ctrl_id, _r_autorun_isenabled () ? BST_CHECKED : BST_UNCHECKED);
 
 					break;
 				}
@@ -1118,15 +1140,15 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 				case IDC_STARTMINIMIZED_CHK:
 				{
-					app.ConfigSetBoolean (L"IsStartMinimized", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsStartMinimized", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 #if defined(_APP_HAVE_SKIPUAC)
 				case IDC_SKIPUACWARNING_CHK:
 				{
-					app.SkipUacEnable (hwnd, (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
-					CheckDlgButton (hwnd, ctrl_id, app.SkipUacIsEnabled () ? BST_CHECKED : BST_UNCHECKED);
+					_r_skipuac_enable (hwnd, (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					CheckDlgButton (hwnd, ctrl_id, _r_skipuac_isenabled () ? BST_CHECKED : BST_UNCHECKED);
 
 					break;
 				}
@@ -1136,7 +1158,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					BOOLEAN is_enabled = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
 
-					app.ConfigSetBoolean (L"CheckUpdates", is_enabled);
+					_r_config_setboolean (L"CheckUpdates", is_enabled);
 
 #if !defined(_DEBUG) && !defined(_APP_BETA)
 					_r_ctrl_enable (hwnd, IDC_CHECKUPDATESBETA_CHK, is_enabled);
@@ -1148,7 +1170,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 #if !defined(_DEBUG) && !defined(_APP_BETA)
 				case IDC_CHECKUPDATESBETA_CHK:
 				{
-					app.ConfigSetBoolean (L"CheckUpdatesBeta", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"CheckUpdatesBeta", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 #endif // !_DEBUG && !_APP_BETA
@@ -1156,26 +1178,26 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				case IDC_LANGUAGE:
 				{
 					if (notify_code == CBN_SELCHANGE)
-						app.LocaleApplyFromControl (hwnd, ctrl_id);
+						_r_locale_applyfromcontrol (hwnd, ctrl_id);
 
 					break;
 				}
 
 				case IDC_CONFIRMEXIT_CHK:
 				{
-					app.ConfigSetBoolean (L"ConfirmExit2", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"ConfirmExit2", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_CONFIRMEXITTIMER_CHK:
 				{
-					app.ConfigSetBoolean (L"ConfirmExitTimer", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"ConfirmExitTimer", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_CONFIRMLOGCLEAR_CHK:
 				{
-					app.ConfigSetBoolean (L"ConfirmLogClear", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"ConfirmLogClear", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
@@ -1190,7 +1212,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				case IDC_USENETWORKRESOLUTION_CHK:
 				case IDC_USEREFRESHDEVICES_CHK:
 				{
-					_app_config_apply (app.GetHWND (), ctrl_id);
+					_app_config_apply (_r_app_gethwnd (), ctrl_id);
 					break;
 				}
 
@@ -1204,7 +1226,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				case IDC_BLOCKLIST_EXTRA_ALLOW:
 				case IDC_BLOCKLIST_EXTRA_BLOCK:
 				{
-					HMENU hmenu = GetMenu (app.GetHWND ());
+					HMENU hmenu = GetMenu (_r_app_gethwnd ());
 
 					if (ctrl_id >= IDC_BLOCKLIST_SPY_DISABLE && ctrl_id <= IDC_BLOCKLIST_SPY_BLOCK)
 					{
@@ -1212,9 +1234,9 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						_r_menu_checkitem (hmenu, IDM_BLOCKLIST_SPY_DISABLE, IDM_BLOCKLIST_SPY_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_SPY_DISABLE + new_state);
 
-						app.ConfigSetInteger (L"BlocklistSpyState", new_state);
+						_r_config_setinteger (L"BlocklistSpyState", new_state);
 
-						_app_ruleblocklistset (app.GetHWND (), new_state, INVALID_INT, INVALID_INT, TRUE);
+						_app_ruleblocklistset (_r_app_gethwnd (), new_state, INVALID_INT, INVALID_INT, TRUE);
 					}
 					else if (ctrl_id >= IDC_BLOCKLIST_UPDATE_DISABLE && ctrl_id <= IDC_BLOCKLIST_UPDATE_BLOCK)
 					{
@@ -1222,9 +1244,9 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						_r_menu_checkitem (hmenu, IDM_BLOCKLIST_UPDATE_DISABLE, IDM_BLOCKLIST_UPDATE_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_UPDATE_DISABLE + new_state);
 
-						app.ConfigSetInteger (L"BlocklistUpdateState", new_state);
+						_r_config_setinteger (L"BlocklistUpdateState", new_state);
 
-						_app_ruleblocklistset (app.GetHWND (), INVALID_INT, new_state, INVALID_INT, TRUE);
+						_app_ruleblocklistset (_r_app_gethwnd (), INVALID_INT, new_state, INVALID_INT, TRUE);
 					}
 					else if (ctrl_id >= IDC_BLOCKLIST_EXTRA_DISABLE && ctrl_id <= IDC_BLOCKLIST_EXTRA_BLOCK)
 					{
@@ -1232,9 +1254,9 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 						_r_menu_checkitem (hmenu, IDM_BLOCKLIST_EXTRA_DISABLE, IDM_BLOCKLIST_EXTRA_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_EXTRA_DISABLE + new_state);
 
-						app.ConfigSetInteger (L"BlocklistExtraState", new_state);
+						_r_config_setinteger (L"BlocklistExtraState", new_state);
 
-						_app_ruleblocklistset (app.GetHWND (), INVALID_INT, INVALID_INT, new_state, TRUE);
+						_app_ruleblocklistset (_r_app_gethwnd (), INVALID_INT, INVALID_INT, new_state, TRUE);
 					}
 
 					break;
@@ -1245,7 +1267,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					BOOLEAN is_checked = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
 					BOOLEAN is_enabled = is_checked || (IsDlgButtonChecked (hwnd, IDC_ENABLEUILOG_CHK) == BST_CHECKED);
 
-					app.ConfigSetBoolean (L"IsLogEnabled", is_checked);
+					_r_config_setboolean (L"IsLogEnabled", is_checked);
 					SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_PRESSBUTTON, IDM_TRAY_ENABLELOG_CHK, MAKELPARAM (is_checked, 0));
 
 					_r_ctrl_enable (hwnd, IDC_LOGPATH, is_checked); // input
@@ -1259,7 +1281,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					_r_ctrl_enable (hwnd, IDC_EXCLUDESTEALTH_CHK, is_enabled);
 
 					// win8+
-					if (_r_sys_validversion (6, 2))
+					if (_r_sys_isosversiongreaterorequal (WINDOWS_8))
 						_r_ctrl_enable (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, is_enabled);
 
 					_app_loginit (is_enabled);
@@ -1272,13 +1294,13 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					BOOLEAN is_checked = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
 					BOOLEAN is_enabled = is_checked || (IsDlgButtonChecked (hwnd, IDC_ENABLELOG_CHK) == BST_CHECKED);
 
-					app.ConfigSetBoolean (L"IsLogUiEnabled", is_checked);
+					_r_config_setboolean (L"IsLogUiEnabled", is_checked);
 					SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_PRESSBUTTON, IDM_TRAY_ENABLEUILOG_CHK, MAKELPARAM (is_checked, 0));
 
 					_r_ctrl_enable (hwnd, IDC_EXCLUDESTEALTH_CHK, is_enabled);
 
 					// win8+
-					if (_r_sys_validversion (6, 2))
+					if (_r_sys_isosversiongreaterorequal (WINDOWS_8))
 						_r_ctrl_enable (hwnd, IDC_EXCLUDECLASSIFYALLOW_CHK, is_enabled);
 
 					break;
@@ -1288,13 +1310,17 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					if (notify_code == EN_KILLFOCUS)
 					{
-						rstring logpath = _r_ctrl_gettext (hwnd, ctrl_id);
+						PR_STRING logpath = _r_ctrl_gettext (hwnd, ctrl_id);
 
-						if (!logpath.IsEmpty ())
+						if (logpath)
 						{
-							app.ConfigSetString (L"LogPath", _r_path_unexpand (logpath.GetString ()).GetString ());
+							_r_obj_movereference (&logpath, _r_path_unexpand (_r_obj_getstring (logpath)));
 
-							_app_loginit (app.ConfigGetBoolean (L"IsLogEnabled", FALSE));
+							_r_config_setstring (L"LogPath", _r_obj_getstring (logpath));
+
+							_app_loginit (_r_config_getboolean (L"IsLogEnabled", FALSE));
+
+							_r_obj_dereference (logpath);
 						}
 					}
 
@@ -1305,9 +1331,13 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					OPENFILENAME ofn = {0};
 
-					WCHAR path[MAX_PATH] = {0};
-					GetDlgItemText (hwnd, IDC_LOGPATH, path, RTL_NUMBER_OF (path));
-					_r_str_copy (path, RTL_NUMBER_OF (path), _r_path_expand (path).GetString ());
+					WCHAR path[512];
+					PR_STRING expandedPath = NULL;
+
+					expandedPath = _r_ctrl_gettext (hwnd, IDC_LOGPATH);
+
+					_r_obj_movereference (&expandedPath, _r_path_expand (_r_obj_getstring (expandedPath)));
+					_r_str_copy (path, RTL_NUMBER_OF (path), _r_obj_getstring (expandedPath));
 
 					ofn.lStructSize = sizeof (ofn);
 					ofn.hwndOwner = hwnd;
@@ -1320,13 +1350,16 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 					if (GetSaveFileName (&ofn))
 					{
-						_r_str_copy (path, RTL_NUMBER_OF (path), _r_path_unexpand (path).GetString ());
+						_r_obj_movereference (&expandedPath, _r_path_unexpand (path));
 
-						app.ConfigSetString (L"LogPath", path);
-						SetDlgItemText (hwnd, IDC_LOGPATH, path);
+						_r_config_setstring (L"LogPath", _r_obj_getstring (expandedPath));
+						_r_ctrl_settext (hwnd, IDC_LOGPATH, _r_obj_getstringorempty (expandedPath));
 
-						_app_loginit (app.ConfigGetBoolean (L"IsLogEnabled", FALSE));
+						_app_loginit (_r_config_getboolean (L"IsLogEnabled", FALSE));
 					}
+
+					if (expandedPath)
+						_r_obj_dereference (expandedPath);
 
 					break;
 				}
@@ -1335,10 +1368,16 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					if (notify_code == EN_KILLFOCUS)
 					{
-						rstring logviewer = _r_ctrl_gettext (hwnd, ctrl_id);
+						PR_STRING logviewer = _r_ctrl_gettext (hwnd, ctrl_id);
 
-						if (!logviewer.IsEmpty ())
-							app.ConfigSetString (L"LogViewer", _r_path_unexpand (logviewer.GetString ()).GetString ());
+						if (logviewer)
+						{
+							_r_obj_movereference (&logviewer, _r_path_unexpand (_r_obj_getstring (logviewer)));
+
+							_r_config_setstring (L"LogViewer", _r_obj_getstring (logviewer));
+
+							_r_obj_dereference (logviewer);
+						}
 					}
 
 					break;
@@ -1348,9 +1387,13 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					OPENFILENAME ofn = {0};
 
-					WCHAR path[MAX_PATH] = {0};
-					GetDlgItemText (hwnd, IDC_LOGVIEWER, path, RTL_NUMBER_OF (path));
-					_r_str_copy (path, RTL_NUMBER_OF (path), _r_path_expand (path).GetString ());
+					WCHAR path[512];
+					PR_STRING expandedPath = NULL;
+
+					expandedPath = _r_ctrl_gettext (hwnd, IDC_LOGVIEWER);
+
+					_r_obj_movereference (&expandedPath, _r_path_expand (_r_obj_getstring (expandedPath)));
+					_r_str_copy (path, RTL_NUMBER_OF (path), _r_obj_getstring (expandedPath));
 
 					ofn.lStructSize = sizeof (ofn);
 					ofn.hwndOwner = hwnd;
@@ -1363,11 +1406,14 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 					if (GetOpenFileName (&ofn))
 					{
-						_r_str_copy (path, RTL_NUMBER_OF (path), _r_path_unexpand (path).GetString ());
+						_r_obj_movereference (&expandedPath, _r_path_unexpand (path));
 
-						app.ConfigSetString (L"LogViewer", path);
-						SetDlgItemText (hwnd, IDC_LOGVIEWER, path);
+						_r_config_setstring (L"LogViewer", _r_obj_getstringorempty (expandedPath));
+						_r_ctrl_settext (hwnd, IDC_LOGVIEWER, _r_obj_getstringorempty (expandedPath));
 					}
+
+					if (expandedPath)
+						_r_obj_dereference (expandedPath);
 
 					break;
 				}
@@ -1375,7 +1421,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				case IDC_LOGSIZELIMIT_CTRL:
 				{
 					if (notify_code == EN_KILLFOCUS)
-						app.ConfigSetUlong (L"LogSizeLimitKb", (DWORD)SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_GETPOS32, 0, 0));
+						_r_config_setulong (L"LogSizeLimitKb", (DWORD)SendDlgItemMessage (hwnd, IDC_LOGSIZELIMIT, UDM_GETPOS32, 0, 0));
 
 					break;
 				}
@@ -1384,7 +1430,7 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				{
 					BOOLEAN is_enabled = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
 
-					app.ConfigSetBoolean (L"IsNotificationsEnabled", is_enabled);
+					_r_config_setboolean (L"IsNotificationsEnabled", is_enabled);
 					SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_PRESSBUTTON, IDM_TRAY_ENABLENOTIFICATIONS_CHK, MAKELPARAM (is_enabled, 0));
 
 					_r_ctrl_enable (hwnd, IDC_NOTIFICATIONSOUND_CHK, is_enabled);
@@ -1398,6 +1444,8 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 					_r_ctrl_enable (hwnd, IDC_EXCLUDEBLOCKLIST_CHK, is_enabled);
 					_r_ctrl_enable (hwnd, IDC_EXCLUDECUSTOM_CHK, is_enabled);
 
+					PostMessage (hwnd, WM_COMMAND, MAKEWPARAM (IDC_NOTIFICATIONSOUND_CHK, 0), 0);
+
 					_app_notifyrefresh (config.hnotification, FALSE);
 
 					break;
@@ -1405,13 +1453,26 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 
 				case IDC_NOTIFICATIONSOUND_CHK:
 				{
-					app.ConfigSetBoolean (L"IsNotificationsSound", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					BOOLEAN is_checked = (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED);
+
+					CheckDlgButton (hwnd, IDC_NOTIFICATIONFULLSCREENSILENTMODE_CHK, _r_config_getboolean (L"IsNotificationsFullscreenSilentMode", TRUE) ? BST_CHECKED : BST_UNCHECKED);
+
+					_r_config_setboolean (L"IsNotificationsSound", is_checked);
+
+					_r_ctrl_enable (hwnd, IDC_NOTIFICATIONFULLSCREENSILENTMODE_CHK, _r_ctrl_isenabled (hwnd, ctrl_id) && is_checked);
+
+					break;
+				}
+
+				case IDC_NOTIFICATIONFULLSCREENSILENTMODE_CHK:
+				{
+					_r_config_setboolean (L"IsNotificationsFullscreenSilentMode", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_NOTIFICATIONONTRAY_CHK:
 				{
-					app.ConfigSetBoolean (L"IsNotificationsOnTray", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsNotificationsOnTray", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 
 					if (IsWindowVisible (config.hnotification))
 						_app_notifysetpos (config.hnotification, TRUE);
@@ -1422,32 +1483,32 @@ INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 				case IDC_NOTIFICATIONTIMEOUT_CTRL:
 				{
 					if (notify_code == EN_KILLFOCUS)
-						app.ConfigSetUlong (L"NotificationsTimeout", (DWORD)SendDlgItemMessage (hwnd, IDC_NOTIFICATIONTIMEOUT, UDM_GETPOS32, 0, 0));
+						_r_config_setulong (L"NotificationsTimeout", (DWORD)SendDlgItemMessage (hwnd, IDC_NOTIFICATIONTIMEOUT, UDM_GETPOS32, 0, 0));
 
 					break;
 				}
 
 				case IDC_EXCLUDESTEALTH_CHK:
 				{
-					app.ConfigSetBoolean (L"IsExcludeStealth", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsExcludeStealth", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_EXCLUDECLASSIFYALLOW_CHK:
 				{
-					app.ConfigSetBoolean (L"IsExcludeClassifyAllow", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsExcludeClassifyAllow", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_EXCLUDEBLOCKLIST_CHK:
 				{
-					app.ConfigSetBoolean (L"IsExcludeBlocklist", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsExcludeBlocklist", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 
 				case IDC_EXCLUDECUSTOM_CHK:
 				{
-					app.ConfigSetBoolean (L"IsExcludeCustomRules", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
+					_r_config_setboolean (L"IsExcludeCustomRules", (IsDlgButtonChecked (hwnd, ctrl_id) == BST_CHECKED));
 					break;
 				}
 			}
@@ -1491,7 +1552,7 @@ VOID _app_imagelist_init (HWND hwnd)
 {
 	INT icon_size_small = _r_dc_getsystemmetrics (hwnd, SM_CXSMICON);
 	INT icon_size_large = _r_dc_getsystemmetrics (hwnd, SM_CXICON);
-	INT icon_size_toolbar = _r_calc_clamp (INT, _r_dc_getdpi (hwnd, app.ConfigGetInteger (L"ToolbarSize", _R_SIZE_ITEMHEIGHT)), icon_size_small, icon_size_large);
+	INT icon_size_toolbar = _r_calc_clamp (INT, _r_dc_getdpi (hwnd, _r_config_getinteger (L"ToolbarSize", _R_SIZE_ITEMHEIGHT)), icon_size_small, icon_size_large);
 
 	SAFE_DELETE_OBJECT (config.hbmp_enable);
 	SAFE_DELETE_OBJECT (config.hbmp_disable);
@@ -1504,33 +1565,33 @@ VOID _app_imagelist_init (HWND hwnd)
 
 	SAFE_DELETE_ICON (config.hicon_large);
 	SAFE_DELETE_ICON (config.hicon_small);
-	SAFE_DELETE_ICON (config.hicon_package);
+	SAFE_DELETE_ICON (config.hicon_uwp);
 
 	// get default icon for executable
-	_app_getfileicon (_r_path_expand (PATH_NTOSKRNL).GetString (), FALSE, &config.icon_id, &config.hicon_large);
-	_app_getfileicon (_r_path_expand (PATH_NTOSKRNL).GetString (), TRUE, NULL, &config.hicon_small);
-	_app_getfileicon (_r_path_expand (PATH_SHELL32).GetString (), FALSE, &config.icon_service_id, NULL);
+	_app_getfileicon (_r_obj_getstring (config.ntoskrnl_path), FALSE, &config.icon_id, &config.hicon_large);
+	_app_getfileicon (_r_obj_getstring (config.ntoskrnl_path), TRUE, NULL, &config.hicon_small);
+	_app_getfileicon (_r_obj_getstring (config.shell32_path), FALSE, &config.icon_service_id, NULL);
 
 	// get default icon for windows store package (win8+)
-	if (_r_sys_validversion (6, 2))
+	if (_r_sys_isosversiongreaterorequal (WINDOWS_8))
 	{
-		if (!_app_getfileicon (_r_path_expand (PATH_WINSTORE).GetString (), TRUE, &config.icon_uwp_id, &config.hicon_package))
+		if (!_app_getfileicon (_r_obj_getstring (config.winstore_path), TRUE, &config.icon_uwp_id, &config.hicon_uwp))
 		{
 			config.icon_uwp_id = config.icon_id;
-			config.hicon_package = CopyIcon (config.hicon_small);
+			config.hicon_uwp = CopyIcon (config.hicon_small);
 		}
 	}
 
-	config.hbmp_enable = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SHIELD_ENABLE), icon_size_small);
-	config.hbmp_disable = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SHIELD_DISABLE), icon_size_small);
+	config.hbmp_enable = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SHIELD_ENABLE), icon_size_small);
+	config.hbmp_disable = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SHIELD_DISABLE), icon_size_small);
 
-	config.hbmp_allow = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_ALLOW), icon_size_small);
-	config.hbmp_block = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_BLOCK), icon_size_small);
-	config.hbmp_cross = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_CROSS), icon_size_small);
-	config.hbmp_rules = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SETTINGS), icon_size_small);
+	config.hbmp_allow = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_ALLOW), icon_size_small);
+	config.hbmp_block = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_BLOCK), icon_size_small);
+	config.hbmp_cross = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_CROSS), icon_size_small);
+	config.hbmp_rules = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SETTINGS), icon_size_small);
 
-	config.hbmp_checked = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_CHECKED), icon_size_small);
-	config.hbmp_unchecked = _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_UNCHECKED), icon_size_small);
+	config.hbmp_checked = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_CHECKED), icon_size_small);
+	config.hbmp_unchecked = _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_UNCHECKED), icon_size_small);
 
 	// toolbar imagelist
 	if (config.himg_toolbar)
@@ -1540,41 +1601,49 @@ VOID _app_imagelist_init (HWND hwnd)
 
 	if (config.himg_toolbar)
 	{
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SHIELD_ENABLE), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SHIELD_DISABLE), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_REFRESH), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_SETTINGS), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_NOTIFICATIONS), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOG), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOGOPEN), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOGCLEAR), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_ADD), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_DONATE), icon_size_toolbar), NULL);
-		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_LOGUI), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SHIELD_ENABLE), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SHIELD_DISABLE), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_REFRESH), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_SETTINGS), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_NOTIFICATIONS), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_LOG), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_LOGOPEN), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_LOGCLEAR), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_ADD), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_DONATE), icon_size_toolbar), NULL);
+		ImageList_Add (config.himg_toolbar, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_LOGUI), icon_size_toolbar), NULL);
 	}
 
 	// rules imagelist (small)
 	if (config.himg_rules_small)
+	{
 		ImageList_SetIconSize (config.himg_rules_small, icon_size_small, icon_size_small);
+	}
 	else
+	{
 		config.himg_rules_small = ImageList_Create (icon_size_small, icon_size_small, ILC_COLOR32 | ILC_HIGHQUALITYSCALE, 2, 2);
+	}
 
 	if (config.himg_rules_small)
 	{
-		ImageList_Add (config.himg_rules_small, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_ALLOW), icon_size_small), NULL);
-		ImageList_Add (config.himg_rules_small, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_BLOCK), icon_size_small), NULL);
+		ImageList_Add (config.himg_rules_small, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_ALLOW), icon_size_small), NULL);
+		ImageList_Add (config.himg_rules_small, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_BLOCK), icon_size_small), NULL);
 	}
 
 	// rules imagelist (large)
 	if (config.himg_rules_large)
+	{
 		ImageList_SetIconSize (config.himg_rules_large, icon_size_large, icon_size_large);
+	}
 	else
+	{
 		config.himg_rules_large = ImageList_Create (icon_size_large, icon_size_large, ILC_COLOR32 | ILC_HIGHQUALITYSCALE, 2, 2);
+	}
 
 	if (config.himg_rules_large)
 	{
-		ImageList_Add (config.himg_rules_large, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_ALLOW), icon_size_large), NULL);
-		ImageList_Add (config.himg_rules_large, _app_bitmapfrompng (app.GetHINSTANCE (), MAKEINTRESOURCE (IDP_BLOCK), icon_size_large), NULL);
+		ImageList_Add (config.himg_rules_large, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_ALLOW), icon_size_large), NULL);
+		ImageList_Add (config.himg_rules_large, _app_bitmapfrompng (NULL, MAKEINTRESOURCE (IDP_BLOCK), icon_size_large), NULL);
 	}
 }
 
@@ -1646,43 +1715,44 @@ VOID _app_tabs_init (HWND hwnd)
 	RECT rc = {0};
 	GetClientRect (hwnd, &rc);
 
-	SetWindowPos (GetDlgItem (hwnd, IDC_TAB), NULL, 0, 0, _r_calc_rectwidth (INT, &rc), _r_calc_rectheight (INT, &rc), SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+	SetWindowPos (GetDlgItem (hwnd, IDC_TAB), NULL, 0, 0, _r_calc_rectwidth (INT, &rc), _r_calc_rectheight (INT, &rc), SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
 
-	HINSTANCE hinst = app.GetHINSTANCE ();
+	PR_STRING localizedString = NULL;
+	HINSTANCE hinst = _r_app_gethinstance ();
 	DWORD listview_ex_style = LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES | LVS_EX_HEADERINALLVIEWS;
 	DWORD listview_style = WS_CHILD | WS_TABSTOP | LVS_SHOWSELALWAYS | LVS_REPORT | LVS_SHAREIMAGELISTS | LVS_AUTOARRANGE;
 	INT tabs_count = 0;
 
 	CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_APPS_PROFILE, hinst, NULL);
-	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TAB_APPS, NULL).GetString (), I_IMAGENONE, IDC_APPS_PROFILE);
+	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TAB_APPS), I_IMAGENONE, IDC_APPS_PROFILE);
 
 	CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_APPS_SERVICE, hinst, NULL);
-	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TAB_SERVICES, NULL).GetString (), I_IMAGENONE, IDC_APPS_SERVICE);
+	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TAB_SERVICES), I_IMAGENONE, IDC_APPS_SERVICE);
 
 	// uwp apps (win8+)
-	if (_r_sys_validversion (6, 2))
+	if (_r_sys_isosversiongreaterorequal (WINDOWS_8))
 	{
 		CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_APPS_UWP, hinst, NULL);
-		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TAB_PACKAGES, NULL).GetString (), I_IMAGENONE, IDC_APPS_UWP);
+		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TAB_PACKAGES), I_IMAGENONE, IDC_APPS_UWP);
 	}
 
-	if (!app.ConfigGetBoolean (L"IsInternalRulesDisabled", FALSE))
+	if (!_r_config_getboolean (L"IsInternalRulesDisabled", FALSE))
 	{
 		CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_RULES_BLOCKLIST, hinst, NULL);
-		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TRAY_BLOCKLIST_RULES, NULL).GetString (), I_IMAGENONE, IDC_RULES_BLOCKLIST);
+		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TRAY_BLOCKLIST_RULES), I_IMAGENONE, IDC_RULES_BLOCKLIST);
 
 		CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_RULES_SYSTEM, hinst, NULL);
-		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TRAY_SYSTEM_RULES, NULL).GetString (), I_IMAGENONE, IDC_RULES_SYSTEM);
+		_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TRAY_SYSTEM_RULES), I_IMAGENONE, IDC_RULES_SYSTEM);
 	}
 
 	CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_RULES_CUSTOM, hinst, NULL);
-	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TRAY_USER_RULES, NULL).GetString (), I_IMAGENONE, IDC_RULES_CUSTOM);
+	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TRAY_USER_RULES), I_IMAGENONE, IDC_RULES_CUSTOM);
 
 	CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_NETWORK, hinst, NULL);
-	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TAB_NETWORK, NULL).GetString (), I_IMAGENONE, IDC_NETWORK);
+	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TAB_NETWORK), I_IMAGENONE, IDC_NETWORK);
 
 	CreateWindowEx (0, WC_LISTVIEW, NULL, listview_style | LVS_NOSORTHEADER, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, hwnd, (HMENU)IDC_LOG, hinst, NULL);
-	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, app.LocaleString (IDS_TITLE_LOGGING, NULL).GetString (), I_IMAGENONE, IDC_LOG);
+	_r_tab_additem (hwnd, IDC_TAB, tabs_count++, _r_locale_getstring (IDS_TITLE_LOGGING), I_IMAGENONE, IDC_LOG);
 
 	for (INT i = 0; i < tabs_count; i++)
 	{
@@ -1696,6 +1766,8 @@ VOID _app_tabs_init (HWND hwnd)
 		if (!hlistview)
 			continue;
 
+		SetWindowPos (hlistview, HWND_TOP, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_FRAMECHANGED);
+
 		_app_listviewsetfont (hwnd, listview_id, FALSE);
 
 		if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_RULES_CUSTOM)
@@ -1704,14 +1776,14 @@ VOID _app_tabs_init (HWND hwnd)
 
 			if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 			{
-				_r_listview_addcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0, LVCFMT_LEFT);
-				_r_listview_addcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDED, NULL).GetString (), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0, LVCFMT_LEFT);
+				_r_listview_addcolumn (hwnd, listview_id, 1, _r_locale_getstring (IDS_ADDED), 0, LVCFMT_RIGHT);
 			}
 			else
 			{
-				_r_listview_addcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0, LVCFMT_LEFT);
-				_r_listview_addcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_PROTOCOL, NULL).GetString (), 0, LVCFMT_RIGHT);
-				_r_listview_addcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_DIRECTION, NULL).GetString (), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0, LVCFMT_LEFT);
+				_r_listview_addcolumn (hwnd, listview_id, 1, _r_locale_getstring (IDS_PROTOCOL), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 2, _r_locale_getstring (IDS_DIRECTION), 0, LVCFMT_RIGHT);
 			}
 
 			_r_listview_addgroup (hwnd, listview_id, 0, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
@@ -1720,41 +1792,50 @@ VOID _app_tabs_init (HWND hwnd)
 		}
 		else if (listview_id == IDC_NETWORK || listview_id == IDC_LOG)
 		{
-			_r_listview_setstyle (hwnd, listview_id, listview_ex_style & ~LVS_EX_CHECKBOXES, FALSE); // no checkboxes
+			_r_listview_setstyle (hwnd, listview_id, listview_ex_style & ~LVS_EX_CHECKBOXES, (listview_id == IDC_NETWORK)); // no checkboxes
 
-			_r_listview_addcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0, LVCFMT_RIGHT);
-			_r_listview_addcolumn (hwnd, listview_id, 3, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0, LVCFMT_LEFT);
-			_r_listview_addcolumn (hwnd, listview_id, 4, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0, LVCFMT_RIGHT);
-			_r_listview_addcolumn (hwnd, listview_id, 5, app.LocaleString (IDS_PROTOCOL, NULL).GetString (), 0, LVCFMT_RIGHT);
+			_r_listview_addcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0, LVCFMT_LEFT);
+
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_ADDRESS)));
+			_r_listview_addcolumn (hwnd, listview_id, 1, _r_obj_getstringorempty (localizedString), 0, LVCFMT_LEFT);
+
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_PORT)));
+			_r_listview_addcolumn (hwnd, listview_id, 2, _r_obj_getstringorempty (localizedString), 0, LVCFMT_RIGHT);
+
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_ADDRESS)));
+			_r_listview_addcolumn (hwnd, listview_id, 3, _r_obj_getstringorempty (localizedString), 0, LVCFMT_LEFT);
+
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_PORT)));
+			_r_listview_addcolumn (hwnd, listview_id, 4, _r_obj_getstringorempty (localizedString), 0, LVCFMT_RIGHT);
+
+			_r_listview_addcolumn (hwnd, listview_id, 5, _r_locale_getstring (IDS_PROTOCOL), 0, LVCFMT_RIGHT);
 
 			if (listview_id == IDC_NETWORK)
 			{
-				_r_listview_addcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_STATE, NULL).GetString (), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 6, _r_locale_getstring (IDS_STATE), 0, LVCFMT_RIGHT);
+
+				_r_listview_addgroup (hwnd, listview_id, 0, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
+				_r_listview_addgroup (hwnd, listview_id, 1, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
+				_r_listview_addgroup (hwnd, listview_id, 2, L"", 0, LVGS_COLLAPSIBLE, LVGS_COLLAPSIBLE);
 			}
 			else if (listview_id == IDC_LOG)
 			{
-				_r_listview_addcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_FILTER, NULL).GetString (), 0, LVCFMT_LEFT);
-				_r_listview_addcolumn (hwnd, listview_id, 7, app.LocaleString (IDS_DIRECTION, NULL).GetString (), 0, LVCFMT_RIGHT);
-				_r_listview_addcolumn (hwnd, listview_id, 8, app.LocaleString (IDS_STATE, NULL).GetString (), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 6, _r_locale_getstring (IDS_FILTER), 0, LVCFMT_LEFT);
+				_r_listview_addcolumn (hwnd, listview_id, 7, _r_locale_getstring (IDS_DIRECTION), 0, LVCFMT_RIGHT);
+				_r_listview_addcolumn (hwnd, listview_id, 8, _r_locale_getstring (IDS_STATE), 0, LVCFMT_RIGHT);
 			}
 		}
 
 		_r_tab_adjustchild (hwnd, IDC_TAB, hlistview);
-
-		BringWindowToTop (hlistview); // HACK!!!
 	}
-}
 
-PVOID allocate_pugixml (size_t size)
-{
-	return _r_mem_allocatezero (size);
+	if (localizedString)
+		_r_obj_dereference (localizedString);
 }
 
 VOID _app_initialize ()
 {
-	pugi::set_memory_management_functions (&allocate_pugixml, &_r_mem_free); // set allocation routine
+	pugi::set_memory_management_functions ((pugi::allocation_function)_r_mem_allocatezero, _r_mem_free); // set allocation routine
 
 	// initialize spinlocks
 	_r_fastlock_initialize (&lock_apply);
@@ -1765,7 +1846,7 @@ VOID _app_initialize ()
 
 	// set privileges
 	{
-		DWORD privileges[] = {
+		ULONG privileges[] = {
 			SE_SECURITY_PRIVILEGE,
 			SE_TAKE_OWNERSHIP_PRIVILEGE,
 			SE_BACKUP_PRIVILEGE,
@@ -1782,14 +1863,18 @@ VOID _app_initialize ()
 	// static initializer
 	config.wd_length = GetWindowsDirectory (config.windows_dir, RTL_NUMBER_OF (config.windows_dir));
 
-	_r_str_printf (config.profile_path, RTL_NUMBER_OF (config.profile_path), L"%s\\" XML_PROFILE, app.GetProfileDirectory ());
-	_r_str_printf (config.profile_internal_path, RTL_NUMBER_OF (config.profile_internal_path), L"%s\\" XML_PROFILE_INTERNAL, app.GetProfileDirectory ());
+	_r_str_printf (config.profile_path, RTL_NUMBER_OF (config.profile_path), L"%s\\" XML_PROFILE, _r_app_getprofiledirectory ());
+	_r_str_printf (config.profile_path_backup, RTL_NUMBER_OF (config.profile_path_backup), L"%s\\" XML_PROFILE L".bak", _r_app_getprofiledirectory ());
+	_r_str_printf (config.profile_internal_path, RTL_NUMBER_OF (config.profile_internal_path), L"%s\\" XML_PROFILE_INTERNAL, _r_app_getprofiledirectory ());
 
-	_r_str_copy (config.profile_path_backup, RTL_NUMBER_OF (config.profile_path_backup), _r_fmt (L"%s.bak", config.profile_path).GetString ());
+	config.svchost_path = _r_path_expand (PATH_SVCHOST);
+	config.ntoskrnl_path = _r_path_expand (PATH_NTOSKRNL);
+	config.shell32_path = _r_path_expand (PATH_SHELL32);
+	config.winstore_path = _r_path_expand (PATH_WINSTORE);
 
+	config.my_hash = _r_str_hash (_r_app_getbinarypath ());
 	config.ntoskrnl_hash = _r_str_hash (PROC_SYSTEM_NAME);
-	config.svchost_hash = _r_str_hash (_r_path_expand (PATH_SVCHOST).GetString ());
-	config.my_hash = _r_str_hash (app.GetBinaryPath ());
+	config.svchost_hash = _r_str_hash (config.svchost_path);
 
 	// initialize timers
 	{
@@ -1800,13 +1885,13 @@ VOID _app_initialize ()
 
 		timers.clear ();
 
-		timers.push_back (_r_calc_minutes2seconds (time_t, 2));
-		timers.push_back (_r_calc_minutes2seconds (time_t, 5));
-		timers.push_back (_r_calc_minutes2seconds (time_t, 10));
-		timers.push_back (_r_calc_hours2seconds (time_t, 1));
-		timers.push_back (_r_calc_hours2seconds (time_t, 2));
-		timers.push_back (_r_calc_hours2seconds (time_t, 4));
-		timers.push_back (_r_calc_hours2seconds (time_t, 6));
+		timers.emplace_back (_r_calc_minutes2seconds (time_t, 2));
+		timers.emplace_back (_r_calc_minutes2seconds (time_t, 5));
+		timers.emplace_back (_r_calc_minutes2seconds (time_t, 10));
+		timers.emplace_back (_r_calc_hours2seconds (time_t, 1));
+		timers.emplace_back (_r_calc_hours2seconds (time_t, 2));
+		timers.emplace_back (_r_calc_hours2seconds (time_t, 4));
+		timers.emplace_back (_r_calc_hours2seconds (time_t, 6));
 	}
 
 	// initialize thread objects
@@ -1864,15 +1949,19 @@ find_wrap:
 
 			for (; current_item < last_item; current_item++)
 			{
-				rstring item_text = _r_listview_getitemtext (hwnd, listview_id, current_item, 0);
+				PR_STRING item_text = _r_listview_getitemtext (hwnd, listview_id, current_item, 0);
 
-				if (item_text.IsEmpty ())
-					continue;
-
-				if (StrStrNIW (item_text.GetString (), lpfr->lpstrFindWhat, (UINT)item_text.GetLength ()) != NULL)
+				if (item_text)
 				{
-					_app_showitem (hwnd, listview_id, current_item, INVALID_INT);
-					return FALSE;
+					if (StrStrNIW (_r_obj_getstring (item_text), lpfr->lpstrFindWhat, (UINT)_r_obj_getstringlength (item_text)) != NULL)
+					{
+						_app_showitem (hwnd, listview_id, current_item, INVALID_INT);
+						_r_obj_dereference (item_text);
+
+						return FALSE;
+					}
+
+					_r_obj_dereference (item_text);
 				}
 			}
 
@@ -1898,6 +1987,8 @@ find_wrap:
 
 			_app_initialize ();
 
+			_r_wnd_center (hwnd, NULL);
+
 			// init buffered paint
 			BufferedPaintInit ();
 
@@ -1905,17 +1996,17 @@ find_wrap:
 			DragAcceptFiles (hwnd, TRUE);
 
 			// initialize settings
-			app.SettingsAddPage (IDD_SETTINGS_GENERAL, IDS_SETTINGS_GENERAL);
-			app.SettingsAddPage (IDD_SETTINGS_INTERFACE, IDS_TITLE_INTERFACE);
-			app.SettingsAddPage (IDD_SETTINGS_HIGHLIGHTING, IDS_TITLE_HIGHLIGHTING);
-			app.SettingsAddPage (IDD_SETTINGS_RULES, IDS_TRAY_RULES);
+			_r_settings_addpage (IDD_SETTINGS_GENERAL, IDS_SETTINGS_GENERAL);
+			_r_settings_addpage (IDD_SETTINGS_INTERFACE, IDS_TITLE_INTERFACE);
+			_r_settings_addpage (IDD_SETTINGS_HIGHLIGHTING, IDS_TITLE_HIGHLIGHTING);
+			_r_settings_addpage (IDD_SETTINGS_RULES, IDS_TRAY_RULES);
 
-			if (!app.ConfigGetBoolean (L"IsInternalRulesDisabled", FALSE))
-				app.SettingsAddPage (IDD_SETTINGS_BLOCKLIST, IDS_TRAY_BLOCKLIST_RULES);
+			if (!_r_config_getboolean (L"IsInternalRulesDisabled", FALSE))
+				_r_settings_addpage (IDD_SETTINGS_BLOCKLIST, IDS_TRAY_BLOCKLIST_RULES);
 
 			// dropped packets logging (win7+)
-			app.SettingsAddPage (IDD_SETTINGS_NOTIFICATIONS, IDS_TITLE_NOTIFICATIONS);
-			app.SettingsAddPage (IDD_SETTINGS_LOGGING, IDS_TITLE_LOGGING);
+			_r_settings_addpage (IDD_SETTINGS_NOTIFICATIONS, IDS_TITLE_NOTIFICATIONS);
+			_r_settings_addpage (IDD_SETTINGS_LOGGING, IDS_TITLE_LOGGING);
 
 			// initialize colors
 			addcolor (IDS_HIGHLIGHT_TIMER, L"IsHighlightTimer", TRUE, L"ColorTimer", LISTVIEW_COLOR_TIMER);
@@ -1925,12 +2016,10 @@ find_wrap:
 			addcolor (IDS_HIGHLIGHT_SIGNED, L"IsHighlightSigned", TRUE, L"ColorSigned", LISTVIEW_COLOR_SIGNED);
 			addcolor (IDS_HIGHLIGHT_PICO, L"IsHighlightPico", TRUE, L"ColorPico", LISTVIEW_COLOR_PICO);
 			addcolor (IDS_HIGHLIGHT_SYSTEM, L"IsHighlightSystem", TRUE, L"ColorSystem", LISTVIEW_COLOR_SYSTEM);
-			addcolor (IDS_HIGHLIGHT_SERVICE, L"IsHighlightService", TRUE, L"ColorService", LISTVIEW_COLOR_SERVICE);
-			addcolor (IDS_HIGHLIGHT_PACKAGE, L"IsHighlightPackage", TRUE, L"ColorPackage", LISTVIEW_COLOR_PACKAGE);
 			addcolor (IDS_HIGHLIGHT_CONNECTION, L"IsHighlightConnection", TRUE, L"ColorConnection", LISTVIEW_COLOR_CONNECTION);
 
 			// restore window size and position (required!)
-			app.RestoreWindowPosition (hwnd, L"window");
+			_r_window_restoreposition (hwnd, L"window");
 
 			// initialize imagelist
 			_app_imagelist_init (hwnd);
@@ -1942,19 +2031,24 @@ find_wrap:
 			// initialize tabs
 			_app_tabs_init (hwnd);
 
-#ifndef _APP_NO_DARKTHEME
+#if defined(_APP_HAVE_DARKTHEME)
 			_r_wnd_setdarktheme (hwnd);
-#endif // _APP_NO_DARKTHEME
+#endif // _APP_HAVE_DARKTHEME
 
 			// load profile
 			_app_profile_load (hwnd, NULL);
 
 			// add blocklist to update
-			if (!app.ConfigGetBoolean (L"IsInternalRulesDisabled", FALSE))
-				app.UpdateAddComponent (L"Internal rules", L"profile_internal", _r_fmt (L"%" TEXT (PR_LONG64), config.profile_internal_timestamp).GetString (), config.profile_internal_path, FALSE);
+			if (!_r_config_getboolean (L"IsInternalRulesDisabled", FALSE))
+			{
+				WCHAR internalProfileVersion[128];
+				_r_str_printf (internalProfileVersion, RTL_NUMBER_OF (internalProfileVersion), L"%" TEXT (PR_LONG64), config.profile_internal_timestamp);
+
+				_r_update_addcomponent (L"Internal rules", L"profile_internal", internalProfileVersion, config.profile_internal_path, FALSE);
+			}
 
 			// initialize tab
-			_app_settab_id (hwnd, app.ConfigGetInteger (L"CurrentTab", IDC_APPS_PROFILE));
+			_app_settab_id (hwnd, _r_config_getinteger (L"CurrentTab", IDC_APPS_PROFILE));
 
 			// initialize dropped packets log callback thread (win7+)
 			RtlSecureZeroMemory (&log_stack, sizeof (log_stack));
@@ -1975,19 +2069,19 @@ find_wrap:
 					if (install_type == InstallEnabledTemporary)
 						config.is_filterstemporary = TRUE;
 
-					//if (app.ConfigGetBoolean (L"IsDisableWindowsFirewallChecked", TRUE))
+					//if (_r_config_getboolean (L"IsDisableWindowsFirewallChecked", TRUE))
 					//	_mps_changeconfig2 (FALSE);
 
 					_app_changefilters (hwnd, TRUE, TRUE);
 				}
 				else
 				{
-					_r_status_settext (hwnd, IDC_STATUSBAR, 0, app.LocaleString (_app_getinterfacestatelocale (install_type), NULL).GetString ());
+					_r_status_settext (hwnd, IDC_STATUSBAR, 0, _r_locale_getstring (_app_getinterfacestatelocale (install_type)));
 				}
 			}
 
 			// set column size when "auto-size" option are disabled
-			if (!app.ConfigGetBoolean (L"AutoSizeColumns", TRUE))
+			if (!_r_config_getboolean (L"AutoSizeColumns", TRUE))
 			{
 				for (INT i = 0; i < (INT)SendDlgItemMessage (hwnd, IDC_TAB, TCM_GETITEMCOUNT, 0, 0); i++)
 				{
@@ -2009,23 +2103,22 @@ find_wrap:
 
 		case RM_INITIALIZE:
 		{
-			_r_tray_create (hwnd, UID, WM_TRAYICON, app.GetSharedImage (app.GetHINSTANCE (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
+			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_app_gethinstance (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
 
 			HMENU hmenu = GetMenu (hwnd);
 
 			if (hmenu)
 			{
-				if (app.ConfigGetBoolean (L"IsInternalRulesDisabled", FALSE))
+				if (_r_config_getboolean (L"IsInternalRulesDisabled", FALSE))
 					_r_menu_enableitem (hmenu, 4, MF_BYPOSITION, FALSE);
 
-				_r_menu_checkitem (hmenu, IDM_ALWAYSONTOP_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"AlwaysOnTop", _APP_ALWAYSONTOP));
-				_r_menu_checkitem (hmenu, IDM_SHOWFILENAMESONLY_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"ShowFilenames", TRUE));
-				_r_menu_checkitem (hmenu, IDM_AUTOSIZECOLUMNS_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"AutoSizeColumns", TRUE));
-				_r_menu_checkitem (hmenu, IDM_ENABLESPECIALGROUP_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsEnableSpecialGroup", TRUE));
+				_r_menu_checkitem (hmenu, IDM_ALWAYSONTOP_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"AlwaysOnTop", _APP_ALWAYSONTOP));
+				_r_menu_checkitem (hmenu, IDM_SHOWFILENAMESONLY_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"ShowFilenames", TRUE));
+				_r_menu_checkitem (hmenu, IDM_AUTOSIZECOLUMNS_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"AutoSizeColumns", TRUE));
 
 				{
 					UINT menu_id;
-					INT view_type = _r_calc_clamp (INT, app.ConfigGetInteger (L"ViewType", LV_VIEW_DETAILS), LV_VIEW_ICON, LV_VIEW_MAX);
+					INT view_type = _r_calc_clamp (INT, _r_config_getinteger (L"ViewType", LV_VIEW_DETAILS), LV_VIEW_ICON, LV_VIEW_MAX);
 
 					if (view_type == LV_VIEW_ICON)
 						menu_id = IDM_VIEW_ICON;
@@ -2041,7 +2134,7 @@ find_wrap:
 
 				{
 					UINT menu_id;
-					INT icon_size = _r_calc_clamp (INT, app.ConfigGetInteger (L"IconSize", SHIL_SYSSMALL), SHIL_LARGE, SHIL_LAST);
+					INT icon_size = _r_calc_clamp (INT, _r_config_getinteger (L"IconSize", SHIL_SYSSMALL), SHIL_LARGE, SHIL_LAST);
 
 					if (icon_size == SHIL_EXTRALARGE)
 						menu_id = IDM_SIZE_EXTRALARGE;
@@ -2055,29 +2148,29 @@ find_wrap:
 					_r_menu_checkitem (hmenu, IDM_SIZE_SMALL, IDM_SIZE_EXTRALARGE, MF_BYCOMMAND, menu_id);
 				}
 
-				_r_menu_checkitem (hmenu, IDM_ICONSISHIDDEN, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsIconsHidden", FALSE));
+				_r_menu_checkitem (hmenu, IDM_ICONSISHIDDEN, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsIconsHidden", FALSE));
 
-				_r_menu_checkitem (hmenu, IDM_RULE_BLOCKOUTBOUND, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"BlockOutboundConnections", TRUE));
-				_r_menu_checkitem (hmenu, IDM_RULE_BLOCKINBOUND, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"BlockInboundConnections", TRUE));
-				_r_menu_checkitem (hmenu, IDM_RULE_ALLOWLOOPBACK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"AllowLoopbackConnections", TRUE));
-				_r_menu_checkitem (hmenu, IDM_RULE_ALLOW6TO4, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"AllowIPv6", TRUE));
+				_r_menu_checkitem (hmenu, IDM_RULE_BLOCKOUTBOUND, 0, MF_BYCOMMAND, _r_config_getboolean (L"BlockOutboundConnections", TRUE));
+				_r_menu_checkitem (hmenu, IDM_RULE_BLOCKINBOUND, 0, MF_BYCOMMAND, _r_config_getboolean (L"BlockInboundConnections", TRUE));
+				_r_menu_checkitem (hmenu, IDM_RULE_ALLOWLOOPBACK, 0, MF_BYCOMMAND, _r_config_getboolean (L"AllowLoopbackConnections", TRUE));
+				_r_menu_checkitem (hmenu, IDM_RULE_ALLOW6TO4, 0, MF_BYCOMMAND, _r_config_getboolean (L"AllowIPv6", TRUE));
 
-				_r_menu_checkitem (hmenu, IDM_SECUREFILTERS_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsSecureFilters", TRUE));
-				_r_menu_checkitem (hmenu, IDM_USESTEALTHMODE_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"UseStealthMode", TRUE));
-				_r_menu_checkitem (hmenu, IDM_INSTALLBOOTTIMEFILTERS_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"InstallBoottimeFilters", TRUE));
+				_r_menu_checkitem (hmenu, IDM_SECUREFILTERS_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsSecureFilters", TRUE));
+				_r_menu_checkitem (hmenu, IDM_USESTEALTHMODE_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"UseStealthMode", TRUE));
+				_r_menu_checkitem (hmenu, IDM_INSTALLBOOTTIMEFILTERS_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"InstallBoottimeFilters", TRUE));
 
-				_r_menu_checkitem (hmenu, IDM_USECERTIFICATES_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsCertificatesEnabled", FALSE));
-				_r_menu_checkitem (hmenu, IDM_USENETWORKRESOLUTION_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsNetworkResolutionsEnabled", FALSE));
-				_r_menu_checkitem (hmenu, IDM_USEREFRESHDEVICES_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsRefreshDevices", TRUE));
+				_r_menu_checkitem (hmenu, IDM_USECERTIFICATES_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsCertificatesEnabled", FALSE));
+				_r_menu_checkitem (hmenu, IDM_USENETWORKRESOLUTION_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsNetworkResolutionsEnabled", FALSE));
+				_r_menu_checkitem (hmenu, IDM_USEREFRESHDEVICES_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsRefreshDevices", TRUE));
 
-				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_SPY_DISABLE, IDM_BLOCKLIST_SPY_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_SPY_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistSpyState", 2), 0, 2));
-				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_UPDATE_DISABLE, IDM_BLOCKLIST_UPDATE_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_UPDATE_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistUpdateState", 0), 0, 2));
-				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_EXTRA_DISABLE, IDM_BLOCKLIST_EXTRA_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_EXTRA_DISABLE + _r_calc_clamp (INT, app.ConfigGetInteger (L"BlocklistExtraState", 0), 0, 2));
+				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_SPY_DISABLE, IDM_BLOCKLIST_SPY_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_SPY_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistSpyState", 2), 0, 2));
+				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_UPDATE_DISABLE, IDM_BLOCKLIST_UPDATE_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_UPDATE_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistUpdateState", 0), 0, 2));
+				_r_menu_checkitem (hmenu, IDM_BLOCKLIST_EXTRA_DISABLE, IDM_BLOCKLIST_EXTRA_BLOCK, MF_BYCOMMAND, IDM_BLOCKLIST_EXTRA_DISABLE + _r_calc_clamp (INT, _r_config_getinteger (L"BlocklistExtraState", 0), 0, 2));
 			}
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, NULL, 0, app.ConfigGetBoolean (L"IsNotificationsEnabled", TRUE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, NULL, 0, app.ConfigGetBoolean (L"IsLogEnabled", FALSE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, NULL, 0, app.ConfigGetBoolean (L"IsLogUiEnabled", FALSE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, NULL, 0, _r_config_getboolean (L"IsNotificationsEnabled", TRUE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, NULL, 0, _r_config_getboolean (L"IsLogEnabled", FALSE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, NULL, 0, _r_config_getboolean (L"IsLogUiEnabled", FALSE) ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
 
 			break;
 		}
@@ -2090,122 +2183,162 @@ find_wrap:
 
 		case RM_LOCALIZE:
 		{
+			PR_STRING localizedString = NULL;
 			HMENU hmenu = GetMenu (hwnd);
 
 			if (hmenu)
 			{
-				app.LocaleMenu (hmenu, IDS_FILE, 0, TRUE, NULL);
-				app.LocaleMenu (hmenu, IDS_SETTINGS, IDM_SETTINGS, FALSE, L"...\tF2");
-				app.LocaleMenu (hmenu, IDS_ADD_FILE, IDM_ADD_FILE, FALSE, L"...");
-				app.LocaleMenu (GetSubMenu (hmenu, 0), IDS_EXPORT, 5, TRUE, NULL);
-				app.LocaleMenu (GetSubMenu (hmenu, 0), IDS_IMPORT, 6, TRUE, NULL);
-				app.LocaleMenu (hmenu, IDS_IMPORT, IDM_IMPORT, FALSE, L"...\tCtrl+O");
-				app.LocaleMenu (hmenu, IDS_EXPORT, IDM_EXPORT, FALSE, L"...\tCtrl+S");
-				app.LocaleMenu (hmenu, IDS_EXIT, IDM_EXIT, FALSE, NULL);
+				_r_menu_setitemtext (hmenu, 0, _r_locale_getstring (IDS_FILE), TRUE);
+				_r_menu_setitemtext (hmenu, 1, _r_locale_getstring (IDS_EDIT), TRUE);
+				_r_menu_setitemtext (hmenu, 2, _r_locale_getstring (IDS_VIEW), TRUE);
+				_r_menu_setitemtext (hmenu, 3, _r_locale_getstring (IDS_TRAY_RULES), TRUE);
+				_r_menu_setitemtext (hmenu, 4, _r_locale_getstring (IDS_TRAY_BLOCKLIST_RULES), TRUE);
+				_r_menu_setitemtext (hmenu, 5, _r_locale_getstring (IDS_HELP), TRUE);
 
-				app.LocaleMenu (hmenu, IDS_EDIT, 1, TRUE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s...\tF2", _r_locale_getstring (IDS_SETTINGS)));
+				_r_menu_setitemtext (hmenu, IDM_SETTINGS, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_PURGE_UNUSED, IDM_PURGE_UNUSED, FALSE, L"\tCtrl+Shift+X");
-				app.LocaleMenu (hmenu, IDS_PURGE_TIMERS, IDM_PURGE_TIMERS, FALSE, L"\tCtrl+Shift+T");
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_ADD_FILE)));
+				_r_menu_setitemtext (hmenu, IDM_ADD_FILE, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_FIND, IDM_FIND, FALSE, L"...\tCtrl+F");
-				app.LocaleMenu (hmenu, IDS_FINDNEXT, IDM_FINDNEXT, FALSE, L"\tF3");
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s...\tCtrl+O", _r_locale_getstring (IDS_IMPORT)));
+				_r_menu_setitemtext (hmenu, IDM_IMPORT, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_REFRESH, IDM_REFRESH, FALSE, L"\tF5");
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s...\tCtrl+S", _r_locale_getstring (IDS_EXPORT)));
+				_r_menu_setitemtext (hmenu, IDM_EXPORT, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_VIEW, 2, TRUE, NULL);
+				_r_menu_setitemtext (hmenu, IDM_EXIT, _r_locale_getstring (IDS_EXIT), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_ALWAYSONTOP_CHK, IDM_ALWAYSONTOP_CHK, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_SHOWFILENAMESONLY_CHK, IDM_SHOWFILENAMESONLY_CHK, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_AUTOSIZECOLUMNS_CHK, IDM_AUTOSIZECOLUMNS_CHK, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ENABLESPECIALGROUP_CHK, IDM_ENABLESPECIALGROUP_CHK, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+Shift+X", _r_locale_getstring (IDS_PURGE_UNUSED)));
+				_r_menu_setitemtext (hmenu, IDM_PURGE_UNUSED, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (GetSubMenu (hmenu, 2), IDS_ICONS, 5, TRUE, NULL);
-				app.LocaleMenu (hmenu, IDS_ICONSSMALL, IDM_SIZE_SMALL, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ICONSLARGE, IDM_SIZE_LARGE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ICONSEXTRALARGE, IDM_SIZE_EXTRALARGE, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+Shift+T", _r_locale_getstring (IDS_PURGE_TIMERS)));
+				_r_menu_setitemtext (hmenu, IDM_PURGE_TIMERS, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_VIEW_ICON, IDM_VIEW_ICON, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_VIEW_DETAILS, IDM_VIEW_DETAILS, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_VIEW_TILE, IDM_VIEW_TILE, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+F", _r_locale_getstring (IDS_FIND)));
+				_r_menu_setitemtext (hmenu, IDM_FIND, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_ICONSISHIDDEN, IDM_ICONSISHIDDEN, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tF3", _r_locale_getstring (IDS_FINDNEXT)));
+				_r_menu_setitemtext (hmenu, IDM_FINDNEXT, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (GetSubMenu (hmenu, 2), IDS_LANGUAGE, LANG_MENU, TRUE, L" (Language)");
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tF5", _r_locale_getstring (IDS_REFRESH)));
+				_r_menu_setitemtext (hmenu, IDM_REFRESH, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_FONT, IDM_FONT, FALSE, L"...");
+				_r_menu_setitemtext (hmenu, IDM_ALWAYSONTOP_CHK, _r_locale_getstring (IDS_ALWAYSONTOP_CHK), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_SHOWFILENAMESONLY_CHK, _r_locale_getstring (IDS_SHOWFILENAMESONLY_CHK), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_AUTOSIZECOLUMNS_CHK, _r_locale_getstring (IDS_AUTOSIZECOLUMNS_CHK), FALSE);
 
-				rstring recommended = app.LocaleString (IDS_RECOMMENDED, NULL);
+				_r_menu_setitemtext (GetSubMenu (hmenu, 2), 4, _r_locale_getstring (IDS_ICONS), TRUE);
 
-				app.LocaleMenu (hmenu, IDS_TRAY_RULES, 3, TRUE, NULL);
+				_r_menu_setitemtext (hmenu, IDM_SIZE_SMALL, _r_locale_getstring (IDS_ICONSSMALL), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_SIZE_LARGE, _r_locale_getstring (IDS_ICONSLARGE), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_SIZE_EXTRALARGE, _r_locale_getstring (IDS_ICONSEXTRALARGE), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_TAB_NETWORK, IDM_CONNECTIONS_TITLE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_TITLE_SECURITY, IDM_SECURITY_TITLE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_TITLE_ADVANCED, IDM_ADVANCED_TITLE, FALSE, NULL);
+				_r_menu_setitemtext (hmenu, IDM_VIEW_ICON, _r_locale_getstring (IDS_VIEW_ICON), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_VIEW_DETAILS, _r_locale_getstring (IDS_VIEW_DETAILS), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_VIEW_TILE, _r_locale_getstring (IDS_VIEW_TILE), FALSE);
+
+				_r_menu_setitemtext (hmenu, IDM_ICONSISHIDDEN, _r_locale_getstring (IDS_ICONSISHIDDEN), FALSE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (Language)", _r_locale_getstring (IDS_LANGUAGE)));
+				_r_menu_setitemtext (GetSubMenu (hmenu, 2), LANG_MENU, _r_obj_getstringorempty (localizedString), TRUE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_FONT)));
+				_r_menu_setitemtext (hmenu, IDM_FONT, _r_obj_getstringorempty (localizedString), FALSE);
+
+				LPCWSTR recommendedString = _r_locale_getstring (IDS_RECOMMENDED);
+
+				_r_menu_setitemtext (hmenu, IDM_CONNECTIONS_TITLE, _r_locale_getstring (IDS_TAB_NETWORK), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_SECURITY_TITLE, _r_locale_getstring (IDS_TITLE_SECURITY), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_ADVANCED_TITLE, _r_locale_getstring (IDS_TITLE_ADVANCED), FALSE);
 
 				_r_menu_enableitem (hmenu, IDM_CONNECTIONS_TITLE, MF_BYCOMMAND, FALSE);
 				_r_menu_enableitem (hmenu, IDM_SECURITY_TITLE, MF_BYCOMMAND, FALSE);
 				_r_menu_enableitem (hmenu, IDM_ADVANCED_TITLE, MF_BYCOMMAND, FALSE);
 
-				app.LocaleMenu (hmenu, IDS_RULE_BLOCKOUTBOUND, IDM_RULE_BLOCKOUTBOUND, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_RULE_BLOCKINBOUND, IDM_RULE_BLOCKINBOUND, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_RULE_ALLOWLOOPBACK, IDM_RULE_ALLOWLOOPBACK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_RULE_ALLOW6TO4, IDM_RULE_ALLOW6TO4, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_RULE_BLOCKOUTBOUND), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_RULE_BLOCKOUTBOUND, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_SECUREFILTERS_CHK, IDM_SECUREFILTERS_CHK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_USESTEALTHMODE_CHK, IDM_USESTEALTHMODE_CHK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_INSTALLBOOTTIMEFILTERS_CHK, IDM_INSTALLBOOTTIMEFILTERS_CHK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_RULE_BLOCKINBOUND), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_RULE_BLOCKINBOUND, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_USENETWORKRESOLUTION_CHK, IDM_USENETWORKRESOLUTION_CHK, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_USECERTIFICATES_CHK, IDM_USECERTIFICATES_CHK, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_USEREFRESHDEVICES_CHK, IDM_USEREFRESHDEVICES_CHK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_RULE_ALLOWLOOPBACK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_RULE_ALLOWLOOPBACK, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_TRAY_BLOCKLIST_RULES, 4, TRUE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_RULE_ALLOW6TO4), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_RULE_ALLOW6TO4, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_BLOCKLIST_SPY, IDM_BLOCKLIST_SPY_TITLE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_BLOCKLIST_UPDATE, IDM_BLOCKLIST_UPDATE_TITLE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_BLOCKLIST_EXTRA, IDM_BLOCKLIST_EXTRA_TITLE, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_SECUREFILTERS_CHK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_SECUREFILTERS_CHK, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_USESTEALTHMODE_CHK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_USESTEALTHMODE_CHK, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_INSTALLBOOTTIMEFILTERS_CHK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_INSTALLBOOTTIMEFILTERS_CHK, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_menu_setitemtext (hmenu, IDM_USENETWORKRESOLUTION_CHK, _r_locale_getstring (IDS_USENETWORKRESOLUTION_CHK), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_USECERTIFICATES_CHK, _r_locale_getstring (IDS_USECERTIFICATES_CHK), FALSE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_USEREFRESHDEVICES_CHK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_USEREFRESHDEVICES_CHK, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_SPY_TITLE, _r_locale_getstring (IDS_BLOCKLIST_SPY), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_UPDATE_TITLE, _r_locale_getstring (IDS_BLOCKLIST_UPDATE), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_EXTRA_TITLE, _r_locale_getstring (IDS_BLOCKLIST_EXTRA), FALSE);
 
 				_r_menu_enableitem (hmenu, IDM_BLOCKLIST_SPY_TITLE, MF_BYCOMMAND, FALSE);
 				_r_menu_enableitem (hmenu, IDM_BLOCKLIST_UPDATE_TITLE, MF_BYCOMMAND, FALSE);
 				_r_menu_enableitem (hmenu, IDM_BLOCKLIST_EXTRA_TITLE, MF_BYCOMMAND, FALSE);
 
-				app.LocaleMenu (hmenu, IDS_DISABLE, IDM_BLOCKLIST_SPY_DISABLE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ACTION_ALLOW, IDM_BLOCKLIST_SPY_ALLOW, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ACTION_BLOCK, IDM_BLOCKLIST_SPY_BLOCK, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_SPY_DISABLE, _r_locale_getstring (IDS_DISABLE), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_SPY_ALLOW, _r_locale_getstring (IDS_ACTION_ALLOW), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_DISABLE, IDM_BLOCKLIST_UPDATE_DISABLE, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_ACTION_ALLOW, IDM_BLOCKLIST_UPDATE_ALLOW, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ACTION_BLOCK, IDM_BLOCKLIST_UPDATE_BLOCK, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_ACTION_BLOCK), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_SPY_BLOCK, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_DISABLE, IDM_BLOCKLIST_EXTRA_DISABLE, FALSE, _r_fmt (L" (%s)", recommended.GetString ()).GetString ());
-				app.LocaleMenu (hmenu, IDS_ACTION_ALLOW, IDM_BLOCKLIST_EXTRA_ALLOW, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ACTION_BLOCK, IDM_BLOCKLIST_EXTRA_BLOCK, FALSE, NULL);
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s (%s)", _r_locale_getstring (IDS_DISABLE), recommendedString));
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_UPDATE_DISABLE, _r_obj_getstringorempty (localizedString), FALSE);
 
-				app.LocaleMenu (hmenu, IDS_HELP, 5, TRUE, NULL);
-				app.LocaleMenu (hmenu, IDS_WEBSITE, IDM_WEBSITE, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_CHECKUPDATES, IDM_CHECKUPDATES, FALSE, NULL);
-				app.LocaleMenu (hmenu, IDS_ABOUT, IDM_ABOUT, FALSE, L"\tF1");
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_UPDATE_ALLOW, _r_locale_getstring (IDS_ACTION_ALLOW), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_UPDATE_BLOCK, _r_locale_getstring (IDS_ACTION_BLOCK), FALSE);
 
-				app.LocaleEnum ((HWND)GetSubMenu (hmenu, 2), LANG_MENU, TRUE, IDX_LANGUAGE); // enum localizations
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_EXTRA_DISABLE, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_EXTRA_ALLOW, _r_locale_getstring (IDS_ACTION_ALLOW), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_BLOCKLIST_EXTRA_BLOCK, _r_locale_getstring (IDS_ACTION_BLOCK), FALSE);
+
+				_r_menu_setitemtext (hmenu, IDM_WEBSITE, _r_locale_getstring (IDS_WEBSITE), FALSE);
+				_r_menu_setitemtext (hmenu, IDM_CHECKUPDATES, _r_locale_getstring (IDS_CHECKUPDATES), FALSE);
+
+				_r_obj_movereference (&localizedString, _r_format_string (L"%s\tF1", _r_locale_getstring (IDS_ABOUT)));
+				_r_menu_setitemtext (hmenu, IDM_ABOUT, _r_obj_getstringorempty (localizedString), FALSE);
+
+				_r_locale_enum ((HWND)GetSubMenu (hmenu, 2), LANG_MENU, IDX_LANGUAGE); // enum localizations
 			}
 
 			// localize toolbar
 			_app_setinterfacestate (hwnd);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_REFRESH, app.LocaleString (IDS_REFRESH, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_SETTINGS, app.LocaleString (IDS_SETTINGS, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_REFRESH, _r_locale_getstring (IDS_REFRESH), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_SETTINGS, _r_locale_getstring (IDS_SETTINGS), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_OPENRULESEDITOR, app.LocaleString (IDS_OPENRULESEDITOR, L"...").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_OPENRULESEDITOR)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_OPENRULESEDITOR, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, app.LocaleString (IDS_ENABLENOTIFICATIONS_CHK, NULL).GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, app.LocaleString (IDS_ENABLELOG_CHK, NULL).GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, app.LocaleString (IDS_ENABLEUILOG_CHK, L" (session only)").GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, _r_locale_getstring (IDS_ENABLENOTIFICATIONS_CHK), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, _r_locale_getstring (IDS_ENABLELOG_CHK), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, app.LocaleString (IDS_LOGSHOW, L" (Ctrl+I)").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L" (Ctrl+X)").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (session only)", _r_locale_getstring (IDS_ENABLEUILOG_CHK)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, _r_obj_getstringorempty (localizedString), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_DONATE, app.LocaleString (IDS_DONATE, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (Ctrl+I)", _r_locale_getstring (IDS_LOGSHOW)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (Ctrl+X)", _r_locale_getstring (IDS_LOGCLEAR)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_DONATE, _r_locale_getstring (IDS_DONATE), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
 			// set rebar size
 			_app_toolbar_resize ();
@@ -2244,40 +2377,58 @@ find_wrap:
 				else
 					continue;
 
-				_r_tab_setitem (hwnd, IDC_TAB, i, app.LocaleString (locale_id, NULL).GetString (), I_IMAGENONE, 0);
+				_r_tab_setitem (hwnd, IDC_TAB, i, _r_locale_getstring (locale_id), I_IMAGENONE, 0);
 
 				if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 				{
-					_r_listview_setcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDED, NULL).GetString (), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 1, _r_locale_getstring (IDS_ADDED), 0);
 				}
 				else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
 				{
-					_r_listview_setcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_PROTOCOL, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_DIRECTION, NULL).GetString (), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 1, _r_locale_getstring (IDS_PROTOCOL), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 2, _r_locale_getstring (IDS_DIRECTION), 0);
 				}
 				else if (listview_id == IDC_NETWORK)
 				{
-					_r_listview_setcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 3, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 4, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 5, app.LocaleString (IDS_PROTOCOL, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_STATE, NULL).GetString (), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_ADDRESS)));
+					_r_listview_setcolumn (hwnd, listview_id, 1, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_PORT)));
+					_r_listview_setcolumn (hwnd, listview_id, 2, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_ADDRESS)));
+					_r_listview_setcolumn (hwnd, listview_id, 3, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_PORT)));
+					_r_listview_setcolumn (hwnd, listview_id, 4, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_listview_setcolumn (hwnd, listview_id, 5, _r_locale_getstring (IDS_PROTOCOL), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 6, _r_locale_getstring (IDS_STATE), 0);
 				}
 				else if (listview_id == IDC_LOG)
 				{
-					_r_listview_setcolumn (hwnd, listview_id, 0, app.LocaleString (IDS_NAME, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 1, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 2, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_LOCAL).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 3, app.LocaleString (IDS_ADDRESS, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 4, app.LocaleString (IDS_PORT, _r_fmt (L" (%s)", SZ_DIRECTION_REMOTE).GetString ()).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 5, app.LocaleString (IDS_PROTOCOL, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 6, app.LocaleString (IDS_FILTER, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 7, app.LocaleString (IDS_DIRECTION, NULL).GetString (), 0);
-					_r_listview_setcolumn (hwnd, listview_id, 8, app.LocaleString (IDS_STATE, NULL).GetString (), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 0, _r_locale_getstring (IDS_NAME), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_ADDRESS)));
+					_r_listview_setcolumn (hwnd, listview_id, 1, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_LOCAL L")", _r_locale_getstring (IDS_PORT)));
+					_r_listview_setcolumn (hwnd, listview_id, 2, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_ADDRESS)));
+					_r_listview_setcolumn (hwnd, listview_id, 3, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (" SZ_DIRECTION_REMOTE L")", _r_locale_getstring (IDS_PORT)));
+					_r_listview_setcolumn (hwnd, listview_id, 4, _r_obj_getstringorempty (localizedString), 0);
+
+					_r_listview_setcolumn (hwnd, listview_id, 5, _r_locale_getstring (IDS_PROTOCOL), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 6, _r_locale_getstring (IDS_FILTER), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 7, _r_locale_getstring (IDS_DIRECTION), 0);
+					_r_listview_setcolumn (hwnd, listview_id, 8, _r_locale_getstring (IDS_STATE), 0);
 				}
 
 				SendDlgItemMessage (hwnd, listview_id, LVM_RESETEMPTYTEXT, 0, 0);
@@ -2292,12 +2443,16 @@ find_wrap:
 			}
 
 			// refresh notification
-			_r_wnd_addstyle (config.hnotification, IDC_RULES_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
-			_r_wnd_addstyle (config.hnotification, IDC_ALLOW_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
-			_r_wnd_addstyle (config.hnotification, IDC_BLOCK_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
-			_r_wnd_addstyle (config.hnotification, IDC_LATER_BTN, app.IsClassicUI () ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+			BOOLEAN is_classic = _r_app_isclassicui ();
+
+			_r_wnd_addstyle (config.hnotification, IDC_RULES_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+			_r_wnd_addstyle (config.hnotification, IDC_ALLOW_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+			_r_wnd_addstyle (config.hnotification, IDC_BLOCK_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
+			_r_wnd_addstyle (config.hnotification, IDC_LATER_BTN, is_classic ? WS_EX_STATICEDGE : 0, WS_EX_STATICEDGE, GWL_EXSTYLE);
 
 			_app_notifyrefresh (config.hnotification, FALSE);
+
+			SAFE_DELETE_REFERENCE (localizedString);
 
 			break;
 		}
@@ -2306,13 +2461,15 @@ find_wrap:
 		{
 			// refresh tray icon
 			_r_tray_destroy (hwnd, UID);
-			_r_tray_create (hwnd, UID, WM_TRAYICON, app.GetSharedImage (app.GetHINSTANCE (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
+			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_app_gethinstance (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
 
 			break;
 		}
 
 		case RM_DPICHANGED:
 		{
+			PR_STRING localizedString = NULL;
+
 			_app_imagelist_init (hwnd);
 
 			SendDlgItemMessage (config.hrebar, IDC_TOOLBAR, TB_SETIMAGELIST, 0, (LPARAM)config.himg_toolbar);
@@ -2320,19 +2477,23 @@ find_wrap:
 			// reset toolbar information
 			_app_setinterfacestate (hwnd);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_REFRESH, app.LocaleString (IDS_REFRESH, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_SETTINGS, app.LocaleString (IDS_SETTINGS, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_REFRESH, _r_locale_getstring (IDS_REFRESH), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_SETTINGS, _r_locale_getstring (IDS_SETTINGS), BTNS_BUTTON | BTNS_AUTOSIZE | BTNS_SHOWTEXT, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_OPENRULESEDITOR, app.LocaleString (IDS_OPENRULESEDITOR, L"...").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_OPENRULESEDITOR)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_OPENRULESEDITOR, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, app.LocaleString (IDS_ENABLENOTIFICATIONS_CHK, NULL).GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, app.LocaleString (IDS_ENABLELOG_CHK, NULL).GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, app.LocaleString (IDS_ENABLEUILOG_CHK, NULL).GetString (), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLENOTIFICATIONS_CHK, _r_locale_getstring (IDS_ENABLENOTIFICATIONS_CHK), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLELOG_CHK, _r_locale_getstring (IDS_ENABLELOG_CHK), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_ENABLEUILOG_CHK, _r_locale_getstring (IDS_ENABLEUILOG_CHK), BTNS_CHECK | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, app.LocaleString (IDS_LOGSHOW, L" (Ctrl+I)").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L" (Ctrl+X)").GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (Ctrl+I)", _r_locale_getstring (IDS_LOGSHOW)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGSHOW, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
-			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_DONATE, app.LocaleString (IDS_DONATE, NULL).GetString (), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+			_r_obj_movereference (&localizedString, _r_format_string (L"%s (Ctrl+X)", _r_locale_getstring (IDS_LOGCLEAR)));
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_TRAY_LOGCLEAR, _r_obj_getstringorempty (localizedString), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
+
+			_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, IDM_DONATE, _r_locale_getstring (IDS_DONATE), BTNS_BUTTON | BTNS_AUTOSIZE, 0, I_IMAGENONE);
 
 			_app_toolbar_resize ();
 
@@ -2347,12 +2508,14 @@ find_wrap:
 
 			_app_refreshstatus (hwnd, 0);
 
+			SAFE_DELETE_REFERENCE (localizedString);
+
 			break;
 		}
 
 		case RM_CONFIG_UPDATE:
 		{
-			_app_profile_save (NULL);
+			_app_profile_save ();
 			_app_profile_load (hwnd, NULL);
 
 			_app_refreshstatus (hwnd, INVALID_INT);
@@ -2366,12 +2529,9 @@ find_wrap:
 		{
 			time_t current_timestamp = (time_t)lparam;
 
-			_app_freerulesconfig_map (rules_config);
+			_app_freerulesconfig_map (&rules_config);
 
-			_r_fs_makebackup (config.profile_path, current_timestamp);
-
-			_r_fs_remove (config.profile_path, _R_FLAG_REMOVE_FORCE);
-			_r_fs_remove (config.profile_path_backup, _R_FLAG_REMOVE_FORCE);
+			_r_fs_makebackup (config.profile_path, current_timestamp, TRUE);
 
 			_app_profile_load (hwnd, NULL);
 
@@ -2387,8 +2547,8 @@ find_wrap:
 			if (_wfp_isfiltersinstalled ())
 			{
 				if (_app_istimersactive () ?
-					!app.ShowConfirmMessage (hwnd, NULL, app.LocaleString (IDS_QUESTION_TIMER, NULL).GetString (), L"ConfirmExitTimer") :
-					!app.ShowConfirmMessage (hwnd, NULL, app.LocaleString (IDS_QUESTION_EXIT, NULL).GetString (), L"ConfirmExit2"))
+					!_r_show_confirmmessage (hwnd, NULL, _r_locale_getstring (IDS_QUESTION_TIMER), L"ConfirmExitTimer") :
+					!_r_show_confirmmessage (hwnd, NULL, _r_locale_getstring (IDS_QUESTION_EXIT), L"ConfirmExit2"))
 				{
 					SetWindowLongPtr (hwnd, DWLP_MSGRESULT, TRUE);
 					return TRUE;
@@ -2402,7 +2562,7 @@ find_wrap:
 
 		case WM_DESTROY:
 		{
-			app.ConfigSetInteger (L"CurrentTab", (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT));
+			_r_config_setinteger (L"CurrentTab", (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT));
 
 			if (config.hnotification)
 				DestroyWindow (config.hnotification);
@@ -2441,25 +2601,27 @@ find_wrap:
 
 		case WM_DROPFILES:
 		{
-			UINT numfiles = DragQueryFile ((HDROP)wparam, UINT32_MAX, NULL, 0);
+			PR_STRING string;
+			UINT numfiles;
+			UINT length;
 			SIZE_T app_hash = 0;
+
+			numfiles = DragQueryFile ((HDROP)wparam, UINT32_MAX, NULL, 0);
 
 			for (UINT i = 0; i < numfiles; i++)
 			{
-				UINT length = DragQueryFile ((HDROP)wparam, i, NULL, 0) + 1;
+				length = DragQueryFile ((HDROP)wparam, i, NULL, 0);
+				string = _r_obj_createstringex (NULL, length * sizeof (WCHAR));
 
-				LPWSTR file = (LPWSTR)_r_mem_allocatezero (length * sizeof (WCHAR));
+				if (DragQueryFile ((HDROP)wparam, i, string->Buffer, length + 1))
+					app_hash = _app_addapplication (hwnd, string->Buffer, 0, 0, 0, FALSE, FALSE);
 
-				DragQueryFile ((HDROP)wparam, i, file, length);
-
-				app_hash = _app_addapplication (hwnd, file, 0, 0, 0, FALSE, FALSE);
-
-				_r_mem_free (file);
+				_r_obj_dereference (string);
 			}
 
 			DragFinish ((HDROP)wparam);
 
-			_app_profile_save (NULL);
+			_app_profile_save ();
 			_app_refreshstatus (hwnd, INVALID_INT);
 
 			{
@@ -2520,9 +2682,10 @@ find_wrap:
 
 					_r_tab_adjustchild (hwnd, IDC_TAB, hlistview);
 
-					_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 					_app_listviewsetview (hwnd, listview_id);
 					_app_listviewsetfont (hwnd, listview_id, FALSE);
+
+					_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 
 					_app_listviewresize (hwnd, listview_id, FALSE);
 					_app_refreshstatus (hwnd, listview_id);
@@ -2571,8 +2734,13 @@ find_wrap:
 				case LVN_GETINFOTIP:
 				{
 					LPNMLVGETINFOTIP lpnmlv = (LPNMLVGETINFOTIP)lparam;
+					PR_STRING string = _app_gettooltip (hwnd, lpnmlv);
 
-					_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, _app_gettooltip (hwnd, lpnmlv).GetString ());
+					if (string)
+					{
+						_r_str_copy (lpnmlv->pszText, lpnmlv->cchTextMax, string->Buffer);
+						_r_obj_dereference (string);
+					}
 
 					break;
 				}
@@ -2596,79 +2764,69 @@ find_wrap:
 							if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 							{
 								SIZE_T app_hash = lpnmlv->lParam;
-								PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+								PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-								if (!ptr_app_object)
+								if (!ptr_app)
 									break;
 
-								PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+								OBJECTS_APP_VECTOR rules;
 
-								OBJECTS_VEC rules;
-
-								if (ptr_app)
+								if (ptr_app->is_enabled != is_enabled)
 								{
-									if (ptr_app->is_enabled != is_enabled)
-									{
-										ptr_app->is_enabled = is_enabled;
+									ptr_app->is_enabled = is_enabled;
 
-										_r_fastlock_acquireshared (&lock_checkbox);
-										_app_setappiteminfo (hwnd, listview_id, lpnmlv->iItem, app_hash, ptr_app);
-										_r_fastlock_releaseshared (&lock_checkbox);
+									_r_fastlock_acquireshared (&lock_checkbox);
+									_app_setappiteminfo (hwnd, listview_id, lpnmlv->iItem, app_hash, ptr_app);
+									_r_fastlock_releaseshared (&lock_checkbox);
 
-										if (is_enabled)
-											_app_freenotify (app_hash, ptr_app);
+									if (is_enabled)
+										_app_freenotify (app_hash, ptr_app);
 
-										if (!is_enabled && _app_istimeractive (ptr_app))
-											_app_timer_reset (hwnd, ptr_app);
+									if (!is_enabled && _app_istimeractive (ptr_app))
+										_app_timer_reset (hwnd, ptr_app);
 
-										rules.push_back (ptr_app_object);
+									rules.emplace_back (ptr_app);
 
-										HANDLE hengine = _wfp_getenginehandle ();
+									HANDLE hengine = _wfp_getenginehandle ();
 
-										if (hengine)
-											_wfp_create3filters (hengine, rules, __LINE__);
+									if (hengine)
+										_wfp_create3filters (hengine, &rules, __LINE__);
 
-										is_changed = TRUE;
-									}
+									is_changed = TRUE;
 								}
 
-								_r_obj2_dereference (ptr_app_object);
+								_r_obj_dereference (ptr_app);
 							}
 							else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
 							{
-								OBJECTS_VEC rules;
+								OBJECTS_RULE_VECTOR rules;
 
 								SIZE_T rule_idx = lpnmlv->lParam;
-								PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+								PITEM_RULE ptr_rule = _app_getrulebyid (rule_idx);
 
-								if (!ptr_rule_object)
+								if (!ptr_rule)
 									break;
 
-								PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-								if (ptr_rule)
+								if (ptr_rule->is_enabled != is_enabled)
 								{
-									if (ptr_rule->is_enabled != is_enabled)
-									{
-										_r_fastlock_acquireshared (&lock_checkbox);
+									_r_fastlock_acquireshared (&lock_checkbox);
 
-										_app_ruleenable (ptr_rule, is_enabled);
-										_app_setruleiteminfo (hwnd, listview_id, lpnmlv->iItem, ptr_rule, TRUE);
+									_app_ruleenable (ptr_rule, is_enabled);
+									_app_setruleiteminfo (hwnd, listview_id, lpnmlv->iItem, ptr_rule, TRUE);
 
-										_r_fastlock_releaseshared (&lock_checkbox);
+									_r_fastlock_releaseshared (&lock_checkbox);
 
-										rules.push_back (ptr_rule_object);
+									rules.emplace_back (ptr_rule);
 
-										HANDLE hengine = _wfp_getenginehandle ();
+									HANDLE hengine = _wfp_getenginehandle ();
 
-										if (hengine)
-											_wfp_create4filters (hengine, rules, __LINE__);
+									if (hengine)
+										_wfp_create4filters (hengine, &rules, __LINE__);
 
-										is_changed = TRUE;
-									}
+									is_changed = TRUE;
 								}
 
-								_r_obj2_dereference (ptr_rule_object);
+								_r_obj_dereference (ptr_rule);
 							}
 
 							if (is_changed)
@@ -2676,7 +2834,7 @@ find_wrap:
 								_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 								_app_refreshstatus (hwnd, listview_id);
 
-								_app_profile_save (NULL);
+								_app_profile_save ();
 							}
 						}
 					}
@@ -2689,7 +2847,7 @@ find_wrap:
 					NMLVEMPTYMARKUP* lpnmlv = (NMLVEMPTYMARKUP*)lparam;
 
 					lpnmlv->dwFlags = EMF_CENTERED;
-					_r_str_copy (lpnmlv->szMarkup, RTL_NUMBER_OF (lpnmlv->szMarkup), app.LocaleString (IDS_STATUS_EMPTY, NULL).GetString ());
+					_r_str_copy (lpnmlv->szMarkup, RTL_NUMBER_OF (lpnmlv->szMarkup), _r_locale_getstring (IDS_STATUS_EMPTY));
 
 					SetWindowLongPtr (hwnd, DWLP_MSGRESULT, TRUE);
 					return TRUE;
@@ -2746,6 +2904,9 @@ find_wrap:
 					if (!hmenu)
 						break;
 
+					PR_STRING localizedString = NULL;
+					PR_STRING columnText = NULL;
+
 					HMENU hsubmenu1 = NULL;
 					HMENU hsubmenu2 = NULL;
 
@@ -2758,34 +2919,53 @@ find_wrap:
 						hsubmenu2 = CreatePopupMenu ();
 
 						// show rules
-						AppendMenu (hsubmenu1, MF_STRING, IDM_DISABLENOTIFICATIONS, app.LocaleString (IDS_DISABLENOTIFICATIONS, NULL).GetString ());
+						AppendMenu (hsubmenu1, MF_STRING, IDM_DISABLENOTIFICATIONS, _r_locale_getstring (IDS_DISABLENOTIFICATIONS));
 
 						_app_generate_rulesmenu (hsubmenu1, hash_item);
 
 						// show timers
-						AppendMenu (hsubmenu2, MF_STRING, IDM_DISABLETIMER, app.LocaleString (IDS_DISABLETIMER, NULL).GetString ());
+						AppendMenu (hsubmenu2, MF_STRING, IDM_DISABLETIMER, _r_locale_getstring (IDS_DISABLETIMER));
 						AppendMenu (hsubmenu2, MF_SEPARATOR, 0, NULL);
 
 						_app_generate_timermenu (hsubmenu2, hash_item);
 
-						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_EXPLORE, L"\tEnter").GetString ());
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tEnter", _r_locale_getstring (IDS_EXPLORE)));
+						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_POPUP, (UINT_PTR)hsubmenu1, app.LocaleString (IDS_TRAY_RULES, NULL).GetString ());
-						AppendMenu (hmenu, MF_POPUP, (UINT_PTR)hsubmenu2, app.LocaleString (IDS_TIMER, NULL).GetString ());
+						AppendMenu (hmenu, MF_POPUP, (UINT_PTR)hsubmenu1, _r_locale_getstring (IDS_TRAY_RULES));
+						AppendMenu (hmenu, MF_POPUP, (UINT_PTR)hsubmenu2, _r_locale_getstring (IDS_TIMER));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_DELETE, app.LocaleString (IDS_DELETE, L"\tDel").GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tDel", _r_locale_getstring (IDS_DELETE)));
+						AppendMenu (hmenu, MF_STRING, IDM_DELETE, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_CHECK, app.LocaleString (IDS_CHECK, NULL).GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_UNCHECK, app.LocaleString (IDS_UNCHECK, NULL).GetString ());
+						AppendMenu (hmenu, MF_STRING, IDM_CHECK, _r_locale_getstring (IDS_CHECK));
+						AppendMenu (hmenu, MF_STRING, IDM_UNCHECK, _r_locale_getstring (IDS_UNCHECK));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, app.LocaleString (IDS_SELECT_ALL, L"\tCtrl+A").GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+A", _r_locale_getstring (IDS_SELECT_ALL)));
+						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, L"\tCtrl+C").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_COPY2, app.LocaleString (IDS_COPY, _r_fmt (L" \"%s\"", _r_listview_getcolumntext (hwnd, listview_id, lv_column_current).GetString ()).GetString ()).GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+C", _r_locale_getstring (IDS_COPY)));
+						AppendMenu (hmenu, MF_STRING, IDM_COPY, _r_obj_getstringorempty (localizedString));
+
+						columnText = _r_listview_getcolumntext (hwnd, listview_id, lv_column_current);
+
+						if (columnText)
+						{
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s \"%s\"", _r_locale_getstring (IDS_COPY), _r_obj_getstringorempty (columnText)));
+							AppendMenu (hmenu, MF_STRING, IDM_COPY2, _r_obj_getstringorempty (localizedString));
+
+							_r_obj_dereference (columnText);
+						}
 
 						SetMenuDefaultItem (hmenu, IDM_PROPERTIES, MF_BYCOMMAND);
 
-						_r_menu_checkitem (hmenu, IDM_DISABLENOTIFICATIONS, 0, MF_BYCOMMAND, (BOOL)_app_getappinfo (hash_item, InfoIsSilent) != FALSE);
+						_r_menu_checkitem (hmenu, IDM_DISABLENOTIFICATIONS, 0, MF_BYCOMMAND, _app_getappinfo (hash_item, InfoIsSilent) != FALSE);
 
 						if (listview_id != IDC_APPS_PROFILE)
 							_r_menu_enableitem (hmenu, IDM_DELETE, MF_BYCOMMAND, FALSE);
@@ -2793,49 +2973,84 @@ find_wrap:
 					else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
 					{
 						if (listview_id == IDC_RULES_CUSTOM)
-							AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, app.LocaleString (IDS_ADD, L"...").GetString ());
+						{
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_ADD)));
+							AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, _r_obj_getstringorempty (localizedString));
+						}
 
-						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_EDIT2, L"...\tEnter").GetString ());
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s...\tEnter", _r_locale_getstring (IDS_EDIT2)));
+						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, _r_obj_getstringorempty (localizedString));
 
 						if (listview_id == IDC_RULES_CUSTOM)
 						{
-							AppendMenu (hmenu, MF_STRING, IDM_DELETE, app.LocaleString (IDS_DELETE, L"\tDel").GetString ());
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s\tDel", _r_locale_getstring (IDS_DELETE)));
+							AppendMenu (hmenu, MF_STRING, IDM_DELETE, _r_obj_getstringorempty (localizedString));
 
-							PR_OBJECT ptr_rule_object = _app_getrulebyid (hash_item);
+							PITEM_RULE ptr_rule = _app_getrulebyid (hash_item);
 
-							if (ptr_rule_object)
+							if (ptr_rule)
 							{
-								PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-								if (ptr_rule && ptr_rule->is_readonly)
+								if (ptr_rule->is_readonly)
 									_r_menu_enableitem (hmenu, IDM_DELETE, MF_BYCOMMAND, FALSE);
 
-								_r_obj2_dereference (ptr_rule_object);
+								_r_obj_dereference (ptr_rule);
 							}
 						}
 
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_CHECK, app.LocaleString (IDS_CHECK, NULL).GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_UNCHECK, app.LocaleString (IDS_UNCHECK, NULL).GetString ());
+						AppendMenu (hmenu, MF_STRING, IDM_CHECK, _r_locale_getstring (IDS_CHECK));
+						AppendMenu (hmenu, MF_STRING, IDM_UNCHECK, _r_locale_getstring (IDS_UNCHECK));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, app.LocaleString (IDS_SELECT_ALL, L"\tCtrl+A").GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+A", _r_locale_getstring (IDS_SELECT_ALL)));
+						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, L"\tCtrl+C").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_COPY2, app.LocaleString (IDS_COPY, _r_fmt (L" \"%s\"", _r_listview_getcolumntext (hwnd, listview_id, lv_column_current).GetString ()).GetString ()).GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+C", _r_locale_getstring (IDS_COPY)));
+						AppendMenu (hmenu, MF_STRING, IDM_COPY, _r_obj_getstringorempty (localizedString));
+
+						columnText = _r_listview_getcolumntext (hwnd, listview_id, lv_column_current);
+
+						if (columnText)
+						{
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s \"%s\"", _r_locale_getstring (IDS_COPY), _r_obj_getstringorempty (columnText)));
+							AppendMenu (hmenu, MF_STRING, IDM_COPY2, _r_obj_getstringorempty (localizedString));
+
+							_r_obj_dereference (columnText);
+						}
 
 						SetMenuDefaultItem (hmenu, IDM_PROPERTIES, MF_BYCOMMAND);
 					}
 					else if (listview_id == IDC_NETWORK)
 					{
-						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_SHOWINLIST, L"\tEnter").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, app.LocaleString (IDS_OPENRULESEDITOR, L"...").GetString ());
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tEnter", _r_locale_getstring (IDS_SHOWINLIST)));
+						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, _r_obj_getstringorempty (localizedString));
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_OPENRULESEDITOR)));
+						AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_NETWORK_CLOSE, app.LocaleString (IDS_NETWORK_CLOSE, NULL).GetString ());
+						AppendMenu (hmenu, MF_STRING, IDM_NETWORK_CLOSE, _r_locale_getstring (IDS_NETWORK_CLOSE));
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, app.LocaleString (IDS_SELECT_ALL, L"\tCtrl+A").GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+A", _r_locale_getstring (IDS_SELECT_ALL)));
+						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, L"\tCtrl+C").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_COPY2, app.LocaleString (IDS_COPY, _r_fmt (L" \"%s\"", _r_listview_getcolumntext (hwnd, listview_id, lv_column_current).GetString ()).GetString ()).GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+C", _r_locale_getstring (IDS_COPY)));
+						AppendMenu (hmenu, MF_STRING, IDM_COPY, _r_obj_getstringorempty (localizedString));
+
+						columnText = _r_listview_getcolumntext (hwnd, listview_id, lv_column_current);
+
+						if (columnText)
+						{
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s \"%s\"", _r_locale_getstring (IDS_COPY), _r_obj_getstringorempty (columnText)));
+							AppendMenu (hmenu, MF_STRING, IDM_COPY2, _r_obj_getstringorempty (localizedString));
+
+							_r_obj_dereference (columnText);
+						}
 
 						SetMenuDefaultItem (hmenu, IDM_PROPERTIES, MF_BYCOMMAND);
 
@@ -2852,14 +3067,34 @@ find_wrap:
 					}
 					else if (listview_id == IDC_LOG)
 					{
-						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, app.LocaleString (IDS_SHOWINLIST, L"\tEnter").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, app.LocaleString (IDS_OPENRULESEDITOR, L"...").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_TRAY_LOGCLEAR, app.LocaleString (IDS_LOGCLEAR, L"\tCtrl+X").GetString ());
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tEnter", _r_locale_getstring (IDS_SHOWINLIST)));
+						AppendMenu (hmenu, MF_STRING, IDM_PROPERTIES, _r_obj_getstringorempty (localizedString));
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_OPENRULESEDITOR)));
+						AppendMenu (hmenu, MF_STRING, IDM_OPENRULESEDITOR, _r_obj_getstringorempty (localizedString));
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+X", _r_locale_getstring (IDS_LOGCLEAR)));
+						AppendMenu (hmenu, MF_STRING, IDM_TRAY_LOGCLEAR, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, app.LocaleString (IDS_SELECT_ALL, L"\tCtrl+A").GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+A", _r_locale_getstring (IDS_SELECT_ALL)));
+						AppendMenu (hmenu, MF_STRING, IDM_SELECT_ALL, _r_obj_getstringorempty (localizedString));
+
 						AppendMenu (hmenu, MF_SEPARATOR, 0, NULL);
-						AppendMenu (hmenu, MF_STRING, IDM_COPY, app.LocaleString (IDS_COPY, L"\tCtrl+C").GetString ());
-						AppendMenu (hmenu, MF_STRING, IDM_COPY2, app.LocaleString (IDS_COPY, _r_fmt (L" \"%s\"", _r_listview_getcolumntext (hwnd, listview_id, lv_column_current).GetString ()).GetString ()).GetString ());
+
+						_r_obj_movereference (&localizedString, _r_format_string (L"%s\tCtrl+C", _r_locale_getstring (IDS_COPY)));
+						AppendMenu (hmenu, MF_STRING, IDM_COPY, _r_obj_getstringorempty (localizedString));
+
+						columnText = _r_listview_getcolumntext (hwnd, listview_id, lv_column_current);
+
+						if (columnText)
+						{
+							_r_obj_movereference (&localizedString, _r_format_string (L"%s \"%s\"", _r_locale_getstring (IDS_COPY), _r_obj_getstringorempty (columnText)));
+							AppendMenu (hmenu, MF_STRING, IDM_COPY2, _r_obj_getstringorempty (localizedString));
+
+							_r_obj_dereference (columnText);
+						}
 
 						SetMenuDefaultItem (hmenu, IDM_PROPERTIES, MF_BYCOMMAND);
 					}
@@ -2876,6 +3111,8 @@ find_wrap:
 
 					if (command_id)
 						PostMessage (hwnd, WM_COMMAND, MAKEWPARAM (command_id, 0), (LPARAM)lv_column_current);
+
+					SAFE_DELETE_REFERENCE (localizedString);
 
 					break;
 				}
@@ -2933,66 +3170,72 @@ find_wrap:
 #define NOTIFICATIONS_ID 4
 #define LOGGING_ID 5
 #define ERRLOG_ID 6
-
-					BOOLEAN is_filtersinstalled = (_wfp_isfiltersinstalled () != InstallDisabled);
+					PR_STRING localizedString = NULL;
 
 					HMENU hmenu = LoadMenu (NULL, MAKEINTRESOURCE (IDM_TRAY));
 					HMENU hsubmenu = GetSubMenu (hmenu, 0);
 
-					{
-						MENUITEMINFO mii = {0};
+					BOOLEAN is_filtersinstalled = (_wfp_isfiltersinstalled () != InstallDisabled);
 
-						mii.cbSize = sizeof (mii);
-						mii.fMask = MIIM_BITMAP;
-
-						mii.hbmpItem = is_filtersinstalled ? config.hbmp_disable : config.hbmp_enable;
-						SetMenuItemInfo (hsubmenu, IDM_TRAY_START, FALSE, &mii);
-					}
+					_r_menu_setitembitmap (hsubmenu, IDM_TRAY_START, is_filtersinstalled ? config.hbmp_disable : config.hbmp_enable, FALSE);
 
 					// localize
-					app.LocaleMenu (hsubmenu, IDS_TRAY_SHOW, IDM_TRAY_SHOW, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, is_filtersinstalled ? IDS_TRAY_STOP : IDS_TRAY_START, IDM_TRAY_START, FALSE, NULL);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_SHOW, _r_locale_getstring (IDS_TRAY_SHOW), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_START, _r_locale_getstring (is_filtersinstalled ? IDS_TRAY_STOP : IDS_TRAY_START), FALSE);
 
-					app.LocaleMenu (hsubmenu, IDS_TITLE_NOTIFICATIONS, NOTIFICATIONS_ID, TRUE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_TITLE_LOGGING, LOGGING_ID, TRUE, NULL);
+					_r_menu_setitemtext (hsubmenu, NOTIFICATIONS_ID, _r_locale_getstring (IDS_TITLE_NOTIFICATIONS), TRUE);
+					_r_menu_setitemtext (hsubmenu, LOGGING_ID, _r_locale_getstring (IDS_TITLE_LOGGING), TRUE);
 
-					app.LocaleMenu (hsubmenu, IDS_ENABLENOTIFICATIONS_CHK, IDM_TRAY_ENABLENOTIFICATIONS_CHK, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_NOTIFICATIONSOUND_CHK, IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_NOTIFICATIONONTRAY_CHK, IDM_TRAY_NOTIFICATIONONTRAY_CHK, FALSE, NULL);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONS_CHK, _r_locale_getstring (IDS_ENABLENOTIFICATIONS_CHK), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK, _r_locale_getstring (IDS_NOTIFICATIONSOUND_CHK), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_NOTIFICATIONFULLSCREENSILENTMODE_CHK, _r_locale_getstring (IDS_NOTIFICATIONFULLSCREENSILENTMODE_CHK), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_NOTIFICATIONONTRAY_CHK, _r_locale_getstring (IDS_NOTIFICATIONONTRAY_CHK), FALSE);
 
-					app.LocaleMenu (hsubmenu, IDS_ENABLELOG_CHK, IDM_TRAY_ENABLELOG_CHK, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_ENABLEUILOG_CHK, IDM_TRAY_ENABLEUILOG_CHK, FALSE, L" (session only)");
-					app.LocaleMenu (hsubmenu, IDS_LOGSHOW, IDM_TRAY_LOGSHOW, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_LOGCLEAR, IDM_TRAY_LOGCLEAR, FALSE, NULL);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ENABLELOG_CHK, _r_locale_getstring (IDS_ENABLELOG_CHK), FALSE);
 
-					if (_r_fs_exists (app.GetLogPath ()))
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s (session only)", _r_locale_getstring (IDS_ENABLEUILOG_CHK)));
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ENABLEUILOG_CHK, _r_obj_getstringorempty (localizedString), FALSE);
+
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_LOGSHOW, _r_locale_getstring (IDS_LOGSHOW), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_LOGCLEAR, _r_locale_getstring (IDS_LOGCLEAR), FALSE);
+
+					if (_r_fs_exists (_r_app_getlogpath ()))
 					{
-						app.LocaleMenu (hsubmenu, IDS_TRAY_LOGERR, ERRLOG_ID, TRUE, NULL);
+						_r_menu_setitemtext (hsubmenu, ERRLOG_ID, _r_locale_getstring (IDS_TRAY_LOGERR), TRUE);
 
-						app.LocaleMenu (hsubmenu, IDS_LOGSHOW, IDM_TRAY_LOGSHOW_ERR, FALSE, NULL);
-						app.LocaleMenu (hsubmenu, IDS_LOGCLEAR, IDM_TRAY_LOGCLEAR_ERR, FALSE, NULL);
+						_r_menu_setitemtext (hsubmenu, IDM_TRAY_LOGSHOW_ERR, _r_locale_getstring (IDS_LOGSHOW), FALSE);
+						_r_menu_setitemtext (hsubmenu, IDM_TRAY_LOGCLEAR_ERR, _r_locale_getstring (IDS_LOGCLEAR), FALSE);
 					}
 					else
 					{
 						DeleteMenu (hsubmenu, ERRLOG_ID, MF_BYPOSITION);
 					}
 
-					app.LocaleMenu (hsubmenu, IDS_SETTINGS, IDM_TRAY_SETTINGS, FALSE, L"...");
-					app.LocaleMenu (hsubmenu, IDS_WEBSITE, IDM_TRAY_WEBSITE, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_ABOUT, IDM_TRAY_ABOUT, FALSE, NULL);
-					app.LocaleMenu (hsubmenu, IDS_EXIT, IDM_TRAY_EXIT, FALSE, NULL);
+					_r_obj_movereference (&localizedString, _r_format_string (L"%s...", _r_locale_getstring (IDS_SETTINGS)));
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_SETTINGS, _r_obj_getstringorempty (localizedString), FALSE);
 
-					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONS_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsNotificationsEnabled", TRUE));
-					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsNotificationsSound", TRUE));
-					_r_menu_checkitem (hsubmenu, IDM_TRAY_NOTIFICATIONONTRAY_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsNotificationsOnTray", FALSE));
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_WEBSITE, _r_locale_getstring (IDS_WEBSITE), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_ABOUT, _r_locale_getstring (IDS_ABOUT), FALSE);
+					_r_menu_setitemtext (hsubmenu, IDM_TRAY_EXIT, _r_locale_getstring (IDS_EXIT), FALSE);
 
-					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLELOG_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsLogEnabled", FALSE));
-					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLEUILOG_CHK, 0, MF_BYCOMMAND, app.ConfigGetBoolean (L"IsLogUiEnabled", FALSE));
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONS_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsNotificationsEnabled", TRUE));
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsNotificationsSound", TRUE));
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_NOTIFICATIONFULLSCREENSILENTMODE_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsNotificationsFullscreenSilentMode", TRUE));
 
-					if (!app.ConfigGetBoolean (L"IsNotificationsEnabled", TRUE))
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_NOTIFICATIONONTRAY_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsNotificationsOnTray", FALSE));
+
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLELOG_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsLogEnabled", FALSE));
+					_r_menu_checkitem (hsubmenu, IDM_TRAY_ENABLEUILOG_CHK, 0, MF_BYCOMMAND, _r_config_getboolean (L"IsLogUiEnabled", FALSE));
+
+					if (!_r_config_getboolean (L"IsNotificationsEnabled", TRUE))
 					{
 						_r_menu_enableitem (hsubmenu, IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK, MF_BYCOMMAND, FALSE);
+						_r_menu_enableitem (hsubmenu, IDM_TRAY_NOTIFICATIONFULLSCREENSILENTMODE_CHK, MF_BYCOMMAND, FALSE);
 						_r_menu_enableitem (hsubmenu, IDM_TRAY_NOTIFICATIONONTRAY_CHK, MF_BYCOMMAND, FALSE);
+					}
+					else if (!_r_config_getboolean (L"IsNotificationsSound", TRUE))
+					{
+						_r_menu_enableitem (hsubmenu, IDM_TRAY_NOTIFICATIONFULLSCREENSILENTMODE_CHK, MF_BYCOMMAND, FALSE);
 					}
 
 					if (_wfp_isfiltersapplying ())
@@ -3001,6 +3244,8 @@ find_wrap:
 					_r_menu_popup (hsubmenu, hwnd, NULL, TRUE);
 
 					DestroyMenu (hmenu);
+
+					SAFE_DELETE_REFERENCE (localizedString);
 
 					break;
 				}
@@ -3056,7 +3301,7 @@ find_wrap:
 				case DBT_DEVICEARRIVAL:
 				case DBT_DEVICEREMOVECOMPLETE:
 				{
-					if (!app.ConfigGetBoolean (L"IsRefreshDevices", TRUE))
+					if (!_r_config_getboolean (L"IsRefreshDevices", TRUE))
 						break;
 
 					PDEV_BROADCAST_HDR lbhdr = (PDEV_BROADCAST_HDR)lparam;
@@ -3098,9 +3343,9 @@ find_wrap:
 		{
 			INT ctrl_id = LOWORD (wparam);
 
-			if (HIWORD (wparam) == 0 && ctrl_id >= IDX_LANGUAGE && ctrl_id <= (IDX_LANGUAGE + (INT)app.LocaleGetCount ()))
+			if (HIWORD (wparam) == 0 && ctrl_id >= IDX_LANGUAGE && ctrl_id <= (IDX_LANGUAGE + (INT)_r_locale_getcount ()))
 			{
-				app.LocaleApplyFromMenu (GetSubMenu (GetSubMenu (GetMenu (hwnd), 2), LANG_MENU), ctrl_id, IDX_LANGUAGE);
+				_r_locale_applyfrommenu (GetSubMenu (GetSubMenu (GetMenu (hwnd), 2), LANG_MENU), ctrl_id);
 				return FALSE;
 			}
 			else if ((ctrl_id >= IDX_RULES_SPECIAL && ctrl_id <= (IDX_RULES_SPECIAL + (INT)rules_arr.size ())))
@@ -3114,87 +3359,77 @@ find_wrap:
 				BOOL is_remove = INVALID_INT;
 
 				SIZE_T rule_idx = (ctrl_id - IDX_RULES_SPECIAL);
-				PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+				PITEM_RULE ptr_rule = _app_getrulebyid (rule_idx);
 
-				if (!ptr_rule_object)
+				if (!ptr_rule)
 					return FALSE;
 
-				PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-				if (ptr_rule)
+				while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 				{
-					while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
+					SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
+
+					if (ptr_rule->is_forservices && (app_hash == config.ntoskrnl_hash || app_hash == config.svchost_hash))
+						continue;
+
+					PITEM_APP ptr_app = _app_getappitem (app_hash);
+
+					if (!ptr_app)
+						continue;
+
+					_app_freenotify (app_hash, ptr_app);
+
+					if (is_remove == INVALID_INT)
+						is_remove = !!(ptr_rule->is_enabled && (ptr_rule->apps->find (app_hash) != ptr_rule->apps->end ()));
+
+					if (is_remove)
 					{
-						SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
+						ptr_rule->apps->erase (app_hash);
 
-						if (ptr_rule->is_forservices && (app_hash == config.ntoskrnl_hash || app_hash == config.svchost_hash))
-							continue;
+						if (ptr_rule->apps->empty ())
+							_app_ruleenable (ptr_rule, FALSE);
+					}
+					else
+					{
+						ptr_rule->apps->emplace (app_hash, TRUE);
 
-						PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
-
-						if (!ptr_app_object)
-							continue;
-
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
-
-						if (ptr_app)
-						{
-							_app_freenotify (app_hash, ptr_app);
-
-							if (is_remove == INVALID_INT)
-								is_remove = !!(ptr_rule->is_enabled && (ptr_rule->apps.find (app_hash) != ptr_rule->apps.end ()));
-
-							if (is_remove)
-							{
-								ptr_rule->apps.erase (app_hash);
-
-								if (ptr_rule->apps.empty ())
-									_app_ruleenable (ptr_rule, FALSE);
-							}
-							else
-							{
-								ptr_rule->apps[app_hash] = TRUE;
-
-								_app_ruleenable (ptr_rule, TRUE);
-							}
-
-							_r_fastlock_acquireshared (&lock_checkbox);
-							_app_setappiteminfo (hwnd, listview_id, item, app_hash, ptr_app);
-							_r_fastlock_releaseshared (&lock_checkbox);
-						}
-
-						_r_obj2_dereference (ptr_app_object);
+						_app_ruleenable (ptr_rule, TRUE);
 					}
 
-					INT rule_listview_id = _app_getlistview_id (ptr_rule->type);
+					_r_fastlock_acquireshared (&lock_checkbox);
+					_app_setappiteminfo (hwnd, listview_id, item, app_hash, ptr_app);
+					_r_fastlock_releaseshared (&lock_checkbox);
 
-					if (rule_listview_id)
-					{
-						INT item_pos = _app_getposition (hwnd, rule_listview_id, rule_idx);
-
-						if (item_pos != INVALID_INT)
-						{
-							_r_fastlock_acquireshared (&lock_checkbox);
-							_app_setruleiteminfo (hwnd, rule_listview_id, item_pos, ptr_rule, TRUE);
-							_r_fastlock_releaseshared (&lock_checkbox);
-						}
-					}
-
-					OBJECTS_VEC rules;
-					rules.push_back (ptr_rule_object);
-
-					HANDLE hengine = _wfp_getenginehandle ();
-
-					if (hengine)
-						_wfp_create4filters (hengine, rules, __LINE__);
+					_r_obj_dereference (ptr_app);
 				}
 
-				_r_obj2_dereference (ptr_rule_object);
+				INT rule_listview_id = _app_getlistview_id (ptr_rule->type);
+
+				if (rule_listview_id)
+				{
+					INT item_pos = _app_getposition (hwnd, rule_listview_id, rule_idx);
+
+					if (item_pos != INVALID_INT)
+					{
+						_r_fastlock_acquireshared (&lock_checkbox);
+						_app_setruleiteminfo (hwnd, rule_listview_id, item_pos, ptr_rule, TRUE);
+						_r_fastlock_releaseshared (&lock_checkbox);
+					}
+				}
+
+				OBJECTS_RULE_VECTOR rules;
+				rules.emplace_back (ptr_rule);
+
+				HANDLE hengine = _wfp_getenginehandle ();
+
+				if (hengine)
+					_wfp_create4filters (hengine, &rules, __LINE__);
+
+				_r_obj_dereference (ptr_rule);
 
 				_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 				_app_refreshstatus (hwnd, listview_id);
 
-				_app_profile_save (NULL);
+				_app_profile_save ();
 
 				return FALSE;
 			}
@@ -3208,40 +3443,32 @@ find_wrap:
 				SIZE_T timer_idx = (ctrl_id - IDX_TIMER);
 				time_t seconds = timers.at (timer_idx);
 				INT item = INVALID_INT;
-				OBJECTS_VEC rules;
+				OBJECTS_APP_VECTOR rules;
 
 				while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 				{
 					SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
-					PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+					PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-					if (!ptr_app_object)
+					if (!ptr_app)
 						continue;
 
-					PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+					_app_timer_set (hwnd, ptr_app, seconds);
 
-					if (ptr_app)
-					{
-						_app_timer_set (hwnd, ptr_app, seconds);
-						rules.push_back (ptr_app_object);
-					}
-					else
-					{
-						_r_obj2_dereference (ptr_app_object);
-					}
+					rules.emplace_back (ptr_app);
 				}
 
 				HANDLE hengine = _wfp_getenginehandle ();
 
 				if (hengine)
-					_wfp_create3filters (hengine, rules, __LINE__);
+					_wfp_create3filters (hengine, &rules, __LINE__);
 
-				_app_freeobjects_vec (rules);
+				_app_freeapps_vec (&rules);
 
 				_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 				_app_refreshstatus (hwnd, listview_id);
 
-				_app_profile_save (NULL);
+				_app_profile_save ();
 
 				return FALSE;
 			}
@@ -3258,7 +3485,7 @@ find_wrap:
 				case IDM_SETTINGS:
 				case IDM_TRAY_SETTINGS:
 				{
-					app.CreateSettingsWindow (hwnd, &SettingsProc);
+					_r_settings_createwindow (hwnd, &SettingsProc);
 					break;
 				}
 
@@ -3278,30 +3505,30 @@ find_wrap:
 
 				case IDM_CHECKUPDATES:
 				{
-					app.UpdateCheck (hwnd);
+					_r_update_check (hwnd);
 					break;
 				}
 
 				case IDM_DONATE:
 				{
-					ShellExecute (hwnd, NULL, _r_fmt (_APP_DONATE_URL, APP_NAME_SHORT).GetString (), NULL, NULL, SW_SHOWDEFAULT);
+					ShellExecute (hwnd, NULL, _APP_DONATE_NEWURL, NULL, NULL, SW_SHOWDEFAULT);
 					break;
 				}
 
 				case IDM_ABOUT:
 				case IDM_TRAY_ABOUT:
 				{
-					app.CreateAboutWindow (hwnd);
+					_r_show_aboutmessage (hwnd);
 					break;
 				}
 
 				case IDM_IMPORT:
 				{
-					WCHAR path[MAX_PATH] = {0};
+					WCHAR path[MAX_PATH];
 					_r_str_copy (path, RTL_NUMBER_OF (path), XML_PROFILE);
 
-					WCHAR title[MAX_PATH] = {0};
-					_r_str_printf (title, RTL_NUMBER_OF (title), L"%s %s...", app.LocaleString (IDS_IMPORT, NULL).GetString (), path);
+					WCHAR title[MAX_PATH];
+					_r_str_printf (title, RTL_NUMBER_OF (title), L"%s %s...", _r_locale_getstring (IDS_IMPORT), path);
 
 					OPENFILENAME ofn = {0};
 
@@ -3318,11 +3545,14 @@ find_wrap:
 					{
 						if (!_app_profile_load_check (path, XmlProfileV3, TRUE))
 						{
-							app.ShowErrorMessage (hwnd, L"Profile loading error!", ERROR_INVALID_DATA, NULL);
+							_r_show_errormessage (hwnd, L"Import failure!", ERROR_INVALID_DATA, path, NULL);
 						}
 						else
 						{
-							_app_profile_save (config.profile_path_backup); // made backup
+							// made backup
+							_r_fs_remove (config.profile_path_backup, _R_FLAG_REMOVE_FORCE);
+							_app_profile_save ();
+
 							_app_profile_load (hwnd, path); // load profile
 
 							_app_refreshstatus (hwnd, INVALID_INT);
@@ -3336,11 +3566,11 @@ find_wrap:
 
 				case IDM_EXPORT:
 				{
-					WCHAR path[MAX_PATH] = {0};
+					WCHAR path[MAX_PATH];
 					_r_str_copy (path, RTL_NUMBER_OF (path), XML_PROFILE);
 
-					WCHAR title[MAX_PATH] = {0};
-					_r_str_printf (title, RTL_NUMBER_OF (title), L"%s %s...", app.LocaleString (IDS_EXPORT, NULL).GetString (), path);
+					WCHAR title[MAX_PATH];
+					_r_str_printf (title, RTL_NUMBER_OF (title), L"%s %s...", _r_locale_getstring (IDS_EXPORT), path);
 
 					OPENFILENAME ofn = {0};
 
@@ -3355,7 +3585,11 @@ find_wrap:
 
 					if (GetSaveFileName (&ofn))
 					{
-						_app_profile_save (path);
+						_app_profile_save ();
+
+						// added information for export profile failure (issue #707)
+						if (!_r_fs_copy (config.profile_path, path, 0))
+							_r_show_errormessage (hwnd, L"Export failure!", GetLastError (), path, NULL);
 					}
 
 					break;
@@ -3363,10 +3597,10 @@ find_wrap:
 
 				case IDM_ALWAYSONTOP_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"AlwaysOnTop", _APP_ALWAYSONTOP);
+					BOOLEAN new_val = !_r_config_getboolean (L"AlwaysOnTop", _APP_ALWAYSONTOP);
 
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
-					app.ConfigSetBoolean (L"AlwaysOnTop", new_val);
+					_r_config_setboolean (L"AlwaysOnTop", new_val);
 
 					_r_wnd_top (hwnd, new_val);
 
@@ -3375,10 +3609,10 @@ find_wrap:
 
 				case IDM_AUTOSIZECOLUMNS_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"AutoSizeColumns", TRUE);
+					BOOLEAN new_val = !_r_config_getboolean (L"AutoSizeColumns", TRUE);
 
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
-					app.ConfigSetBoolean (L"AutoSizeColumns", new_val);
+					_r_config_setboolean (L"AutoSizeColumns", new_val);
 
 					if (new_val)
 						_app_listviewresize (hwnd, (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT), FALSE);
@@ -3388,94 +3622,40 @@ find_wrap:
 
 				case IDM_SHOWFILENAMESONLY_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"ShowFilenames", TRUE);
+					BOOLEAN new_val = !_r_config_getboolean (L"ShowFilenames", TRUE);
 
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
-					app.ConfigSetBoolean (L"ShowFilenames", new_val);
+					_r_config_setboolean (L"ShowFilenames", new_val);
 
 					// regroup apps
-					for (auto &p : apps)
+					for (auto it = apps.begin (); it != apps.end (); ++it)
 					{
-						PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
-
-						if (!ptr_app_object)
+						if (!it->second)
 							continue;
 
-						SIZE_T app_hash = p.first;
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						SIZE_T app_hash = it->first;
+						PITEM_APP ptr_app = (PITEM_APP)_r_obj_reference (it->second);
 
-						if (ptr_app)
+						_r_obj_movereference (&ptr_app->display_name, _app_getdisplayname (app_hash, ptr_app));
+
+						INT listview_id = _app_getlistview_id (ptr_app->type);
+
+						if (listview_id)
 						{
-							_app_getdisplayname (app_hash, ptr_app, &ptr_app->display_name);
+							INT item_pos = _app_getposition (hwnd, listview_id, app_hash);
 
-							INT listview_id = _app_getlistview_id (ptr_app->type);
-
-							if (listview_id)
+							if (item_pos != INVALID_INT)
 							{
-								INT item_pos = _app_getposition (hwnd, listview_id, app_hash);
-
-								if (item_pos != INVALID_INT)
-								{
-									_r_fastlock_acquireshared (&lock_checkbox);
-									_app_setappiteminfo (hwnd, listview_id, item_pos, app_hash, ptr_app);
-									_r_fastlock_releaseshared (&lock_checkbox);
-								}
+								_r_fastlock_acquireshared (&lock_checkbox);
+								_app_setappiteminfo (hwnd, listview_id, item_pos, app_hash, ptr_app);
+								_r_fastlock_releaseshared (&lock_checkbox);
 							}
 						}
 
-						_r_obj2_dereference (ptr_app_object);
+						_r_obj_dereference (ptr_app);
 					}
 
 					_app_listviewsort (hwnd, (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT), INVALID_INT, FALSE);
-
-					break;
-				}
-
-				case IDM_ENABLESPECIALGROUP_CHK:
-				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsEnableSpecialGroup", TRUE);
-
-					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
-					app.ConfigSetBoolean (L"IsEnableSpecialGroup", new_val);
-
-					// regroup apps
-					for (auto &p : apps)
-					{
-						PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
-
-						if (!ptr_app_object)
-							continue;
-
-						SIZE_T app_hash = p.first;
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
-
-						if (ptr_app)
-						{
-							INT listview_id = _app_getlistview_id (ptr_app->type);
-
-							if (listview_id)
-							{
-								INT item_pos = _app_getposition (hwnd, listview_id, app_hash);
-
-								if (item_pos != INVALID_INT)
-								{
-									_r_fastlock_acquireshared (&lock_checkbox);
-									_app_setappiteminfo (hwnd, listview_id, item_pos, app_hash, ptr_app);
-									_r_fastlock_releaseshared (&lock_checkbox);
-								}
-							}
-						}
-
-						_r_obj2_dereference (ptr_app_object);
-					}
-
-					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
-
-					if (listview_id)
-					{
-						_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
-						_app_refreshstatus (hwnd, listview_id);
-					}
 
 					break;
 				}
@@ -3496,7 +3676,7 @@ find_wrap:
 						view_type = LV_VIEW_DETAILS;
 
 					_r_menu_checkitem (GetMenu (hwnd), IDM_VIEW_ICON, IDM_VIEW_TILE, MF_BYCOMMAND, ctrl_id);
-					app.ConfigSetInteger (L"ViewType", view_type);
+					_r_config_setinteger (L"ViewType", view_type);
 
 					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
@@ -3527,7 +3707,7 @@ find_wrap:
 						icon_size = SHIL_SYSSMALL;
 
 					_r_menu_checkitem (GetMenu (hwnd), IDM_SIZE_SMALL, IDM_SIZE_EXTRALARGE, MF_BYCOMMAND, ctrl_id);
-					app.ConfigSetInteger (L"IconSize", icon_size);
+					_r_config_setinteger (L"IconSize", icon_size);
 
 					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
@@ -3544,39 +3724,34 @@ find_wrap:
 
 				case IDM_ICONSISHIDDEN:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsIconsHidden", FALSE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsIconsHidden", FALSE);
 
 					_r_menu_checkitem (GetMenu (hwnd), ctrl_id, 0, MF_BYCOMMAND, new_val);
-					app.ConfigSetBoolean (L"IsIconsHidden", new_val);
+					_r_config_setboolean (L"IsIconsHidden", new_val);
 
-					for (auto &p : apps)
+					for (auto it = apps.begin (); it != apps.end (); ++it)
 					{
-						PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
-
-						if (!ptr_app_object)
+						if (!it->second)
 							continue;
 
-						SIZE_T app_hash = p.first;
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						SIZE_T app_hash = it->first;
+						PITEM_APP ptr_app = (PITEM_APP)_r_obj_reference (it->second);
 
-						if (ptr_app)
+						INT listview_id = _app_getlistview_id (ptr_app->type);
+
+						if (listview_id)
 						{
-							INT listview_id = _app_getlistview_id (ptr_app->type);
+							INT item_pos = _app_getposition (hwnd, listview_id, app_hash);
 
-							if (listview_id)
+							if (item_pos != INVALID_INT)
 							{
-								INT item_pos = _app_getposition (hwnd, listview_id, app_hash);
-
-								if (item_pos != INVALID_INT)
-								{
-									_r_fastlock_acquireshared (&lock_checkbox);
-									_app_setappiteminfo (hwnd, listview_id, item_pos, app_hash, ptr_app);
-									_r_fastlock_releaseshared (&lock_checkbox);
-								}
+								_r_fastlock_acquireshared (&lock_checkbox);
+								_app_setappiteminfo (hwnd, listview_id, item_pos, app_hash, ptr_app);
+								_r_fastlock_releaseshared (&lock_checkbox);
 							}
 						}
 
-						_r_obj2_dereference (ptr_app_object);
+						_r_obj_dereference (ptr_app);
 					}
 
 					break;
@@ -3595,11 +3770,11 @@ find_wrap:
 					cf.nSizeMin = 8;
 					cf.lpLogFont = &lf;
 
-					_app_listviewinitfont (hwnd, &lf);
+					_r_config_getfont (L"Font", hwnd, &lf);
 
 					if (ChooseFont (&cf))
 					{
-						app.ConfigSetString (L"Font", !_r_str_isempty (lf.lfFaceName) ? _r_fmt (L"%s;%d;%d", lf.lfFaceName, _r_dc_fontheighttosize (hwnd, lf.lfHeight), lf.lfWeight).GetString () : UI_FONT_DEFAULT);
+						_r_config_setfont (L"Font", hwnd, &lf);
 
 						SAFE_DELETE_OBJECT (config.hfont);
 
@@ -3617,7 +3792,6 @@ find_wrap:
 									_app_listviewresize (hwnd, listview_id, FALSE);
 							}
 						}
-
 
 						RedrawWindow (hwnd, NULL, NULL, RDW_NOFRAME | RDW_NOINTERNALPAINT | RDW_ERASE | RDW_INVALIDATE | RDW_ALLCHILDREN);
 					}
@@ -3671,7 +3845,7 @@ find_wrap:
 					if (_wfp_isfiltersapplying ())
 						break;
 
-					app.ConfigInit ();
+					_r_config_initialize ();
 
 					_app_profile_load (hwnd, NULL);
 					_app_refreshstatus (hwnd, INVALID_INT);
@@ -3714,7 +3888,7 @@ find_wrap:
 
 						INT new_state = _r_calc_clamp (INT, ctrl_id - IDM_BLOCKLIST_SPY_DISABLE, 0, 2);
 
-						app.ConfigSetInteger (L"BlocklistSpyState", new_state);
+						_r_config_setinteger (L"BlocklistSpyState", new_state);
 
 						_app_ruleblocklistset (hwnd, new_state, INVALID_INT, INVALID_INT, TRUE);
 					}
@@ -3724,7 +3898,7 @@ find_wrap:
 
 						INT new_state = _r_calc_clamp (INT, ctrl_id - IDM_BLOCKLIST_UPDATE_DISABLE, 0, 2);
 
-						app.ConfigSetInteger (L"BlocklistUpdateState", new_state);
+						_r_config_setinteger (L"BlocklistUpdateState", new_state);
 
 						_app_ruleblocklistset (hwnd, INVALID_INT, new_state, INVALID_INT, TRUE);
 					}
@@ -3734,7 +3908,7 @@ find_wrap:
 
 						INT new_state = _r_calc_clamp (INT, ctrl_id - IDM_BLOCKLIST_EXTRA_DISABLE, 0, 2);
 
-						app.ConfigSetInteger (L"BlocklistExtraState", new_state);
+						_r_config_setinteger (L"BlocklistExtraState", new_state);
 
 						_app_ruleblocklistset (hwnd, INVALID_INT, INVALID_INT, new_state, TRUE);
 					}
@@ -3744,10 +3918,10 @@ find_wrap:
 
 				case IDM_TRAY_ENABLELOG_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsLogEnabled", FALSE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsLogEnabled", FALSE);
 
 					_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, ctrl_id, NULL, 0, new_val ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
-					app.ConfigSetBoolean (L"IsLogEnabled", new_val);
+					_r_config_setboolean (L"IsLogEnabled", new_val);
 
 					_app_loginit (new_val);
 
@@ -3756,20 +3930,20 @@ find_wrap:
 
 				case IDM_TRAY_ENABLEUILOG_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsLogUiEnabled", FALSE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsLogUiEnabled", FALSE);
 
 					_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, ctrl_id, NULL, 0, new_val ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
-					app.ConfigSetBoolean (L"IsLogUiEnabled", new_val);
+					_r_config_setboolean (L"IsLogUiEnabled", new_val);
 
 					break;
 				}
 
 				case IDM_TRAY_ENABLENOTIFICATIONS_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsNotificationsEnabled", TRUE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsNotificationsEnabled", TRUE);
 
 					_r_toolbar_setbutton (config.hrebar, IDC_TOOLBAR, ctrl_id, NULL, 0, new_val ? TBSTATE_PRESSED | TBSTATE_ENABLED : TBSTATE_ENABLED, I_IMAGENONE);
-					app.ConfigSetBoolean (L"IsNotificationsEnabled", new_val);
+					_r_config_setboolean (L"IsNotificationsEnabled", new_val);
 
 					_app_notifyrefresh (config.hnotification, TRUE);
 
@@ -3778,18 +3952,27 @@ find_wrap:
 
 				case IDM_TRAY_ENABLENOTIFICATIONSSOUND_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsNotificationsSound", TRUE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsNotificationsSound", TRUE);
 
-					app.ConfigSetBoolean (L"IsNotificationsSound", new_val);
+					_r_config_setboolean (L"IsNotificationsSound", new_val);
+
+					break;
+				}
+
+				case IDM_TRAY_NOTIFICATIONFULLSCREENSILENTMODE_CHK:
+				{
+					BOOLEAN new_val = !_r_config_getboolean (L"IsNotificationsFullscreenSilentMode", TRUE);
+
+					_r_config_setboolean (L"IsNotificationsFullscreenSilentMode", new_val);
 
 					break;
 				}
 
 				case IDM_TRAY_NOTIFICATIONONTRAY_CHK:
 				{
-					BOOLEAN new_val = !app.ConfigGetBoolean (L"IsNotificationsOnTray", FALSE);
+					BOOLEAN new_val = !_r_config_getboolean (L"IsNotificationsOnTray", FALSE);
 
-					app.ConfigSetBoolean (L"IsNotificationsOnTray", new_val);
+					_r_config_setboolean (L"IsNotificationsOnTray", new_val);
 
 					if (IsWindowVisible (config.hnotification))
 						_app_notifysetpos (config.hnotification, TRUE);
@@ -3799,7 +3982,7 @@ find_wrap:
 
 				case IDM_TRAY_LOGSHOW:
 				{
-					if (app.ConfigGetBoolean (L"IsLogUiEnabled", FALSE))
+					if (_r_config_getboolean (L"IsLogUiEnabled", FALSE))
 					{
 						_r_wnd_toggle (hwnd, TRUE);
 
@@ -3814,15 +3997,38 @@ find_wrap:
 					}
 					else
 					{
-						rstring path = _r_path_expand (app.ConfigGetString (L"LogPath", LOG_PATH_DEFAULT).GetString ());
+						PR_STRING logPath;
+						PR_STRING viewerPath;
+						PR_STRING processPath;
 
-						if (!_r_fs_exists (path.GetString ()))
+						logPath = _r_path_expand (_r_config_getstring (L"LogPath", LOG_PATH_DEFAULT));
+
+						if (!logPath)
 							return FALSE;
+
+						if (!_r_fs_exists (logPath->Buffer))
+						{
+							_r_obj_dereference (logPath);
+							return FALSE;
+						}
 
 						if (_r_fs_isvalidhandle (config.hlogfile))
 							FlushFileBuffers (config.hlogfile);
 
-						_r_sys_createprocess (NULL, _r_fmt (L"%s \"%s\"", _app_getlogviewer ().GetString (), path.GetString ()).GetString (), NULL);
+						viewerPath = _app_getlogviewer ();
+
+						if (viewerPath)
+						{
+							processPath = _r_format_string (L"%s \"%s\"", _r_obj_getstring (viewerPath), logPath->Buffer);
+
+							if (!_r_sys_createprocess (NULL, processPath->Buffer, NULL))
+								_r_show_errormessage (hwnd, NULL, GetLastError (), viewerPath->Buffer, NULL);
+
+							_r_obj_dereference (processPath);
+							_r_obj_dereference (viewerPath);
+						}
+
+						_r_obj_dereference (logPath);
 					}
 
 					break;
@@ -3830,39 +4036,57 @@ find_wrap:
 
 				case IDM_TRAY_LOGCLEAR:
 				{
-					rstring path = _r_path_expand (app.ConfigGetString (L"LogPath", LOG_PATH_DEFAULT).GetString ());
-					BOOLEAN is_validhandle = _r_fs_isvalidhandle (config.hlogfile);
+					PR_STRING path = _r_path_expand (_r_config_getstring (L"LogPath", LOG_PATH_DEFAULT));
 
-					if (is_validhandle || _r_fs_exists (path.GetString ()) || !log_arr.empty ())
+					if (_r_fs_isvalidhandle (config.hlogfile) || (path && _r_fs_exists (path->Buffer)) || !log_arr.empty ())
 					{
-						if (!app.ShowConfirmMessage (hwnd, NULL, app.LocaleString (IDS_QUESTION, NULL).GetString (), L"ConfirmLogClear"))
-							break;
+						if (_r_show_confirmmessage (hwnd, NULL, _r_locale_getstring (IDS_QUESTION), L"ConfirmLogClear"))
+						{
+							_app_freelogstack ();
 
-						_app_freelogstack ();
-
-						_app_logclear ();
-						_app_logclear_ui (hwnd);
+							_app_logclear ();
+							_app_logclear_ui (hwnd);
+						}
 					}
+
+					SAFE_DELETE_REFERENCE (path);
 
 					break;
 				}
 
 				case IDM_TRAY_LOGSHOW_ERR:
 				{
-					LPCWSTR path = app.GetLogPath ();
+					PR_STRING viewerPath;
+					PR_STRING processPath;
+					LPCWSTR logPath;
 
-					if (_r_fs_exists (path))
-						_r_sys_createprocess (NULL, _r_fmt (L"%s \"%s\"", _app_getlogviewer ().GetString (), path).GetString (), NULL);
+					logPath = _r_app_getlogpath ();
+
+					if (_r_fs_exists (logPath))
+					{
+						viewerPath = _app_getlogviewer ();
+
+						if (viewerPath)
+						{
+							processPath = _r_format_string (L"%s \"%s\"", viewerPath->Buffer, logPath);
+
+							if (!_r_sys_createprocess (NULL, processPath->Buffer, NULL))
+								_r_show_errormessage (hwnd, NULL, GetLastError (), viewerPath->Buffer, NULL);
+
+							_r_obj_dereference (processPath);
+							_r_obj_dereference (viewerPath);
+						}
+					}
 
 					break;
 				}
 
 				case IDM_TRAY_LOGCLEAR_ERR:
 				{
-					if (!app.ShowConfirmMessage (hwnd, NULL, app.LocaleString (IDS_QUESTION, NULL).GetString (), L"ConfirmLogClear"))
+					if (!_r_show_confirmmessage (hwnd, NULL, _r_locale_getstring (IDS_QUESTION), L"ConfirmLogClear"))
 						break;
 
-					LPCWSTR path = app.GetLogPath ();
+					LPCWSTR path = _r_app_getlogpath ();
 
 					if (!_r_fs_exists (path))
 						break;
@@ -3887,7 +4111,7 @@ find_wrap:
 
 				case IDM_ADD_FILE:
 				{
-					WCHAR files[_R_BUFFER_LENGTH] = {0};
+					WCHAR files[8192] = {0};
 					OPENFILENAME ofn = {0};
 
 					ofn.lStructSize = sizeof (ofn);
@@ -3908,7 +4132,10 @@ find_wrap:
 						else
 						{
 							LPWSTR p = files;
+
 							WCHAR dir[MAX_PATH] = {0};
+							WCHAR full_path[512];
+
 							GetCurrentDirectory (RTL_NUMBER_OF (dir), dir);
 
 							while (*p)
@@ -3917,7 +4144,8 @@ find_wrap:
 
 								if (*p)
 								{
-									app_hash = _app_addapplication (hwnd, _r_fmt (L"%s\\%s", dir, p).GetString (), 0, 0, 0, FALSE, FALSE);
+									_r_str_printf (full_path, RTL_NUMBER_OF (full_path), L"%s\\%s", dir, p);
+									app_hash = _app_addapplication (hwnd, full_path, 0, 0, 0, FALSE, FALSE);
 								}
 							}
 						}
@@ -3935,7 +4163,7 @@ find_wrap:
 						}
 
 						_app_refreshstatus (hwnd, INVALID_INT);
-						_app_profile_save (NULL);
+						_app_profile_save ();
 					}
 
 					break;
@@ -3956,38 +4184,33 @@ find_wrap:
 					while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 					{
 						SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
-						PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+						PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-						if (!ptr_app_object)
+						if (!ptr_app)
 							continue;
 
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
-
-						if (ptr_app)
+						if (ctrl_id == IDM_DISABLENOTIFICATIONS)
 						{
-							if (ctrl_id == IDM_DISABLENOTIFICATIONS)
-							{
-								if (new_val == INVALID_INT)
-									new_val = !ptr_app->is_silent;
+							if (new_val == INVALID_INT)
+								new_val = !ptr_app->is_silent;
 
-								ptr_app->is_silent = new_val;
+							ptr_app->is_silent = !!new_val;
 
-								if (new_val)
-									_app_freenotify (app_hash, ptr_app);
-							}
-							else if (ctrl_id == IDM_DISABLETIMER)
-							{
-								_app_timer_reset (hwnd, ptr_app);
-							}
+							if (new_val)
+								_app_freenotify (app_hash, ptr_app);
+						}
+						else if (ctrl_id == IDM_DISABLETIMER)
+						{
+							_app_timer_reset (hwnd, ptr_app);
 						}
 
-						_r_obj2_dereference (ptr_app_object);
+						_r_obj_dereference (ptr_app);
 					}
 
 					_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 					_app_refreshstatus (hwnd, listview_id);
 
-					_app_profile_save (NULL);
+					_app_profile_save ();
 
 					break;
 				}
@@ -3995,34 +4218,64 @@ find_wrap:
 				case IDM_COPY:
 				case IDM_COPY2:
 				{
-					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
-					INT item = INVALID_INT;
+					INT listview_id;
+					INT item;
 
-					INT column_count = _r_listview_getcolumncount (hwnd, listview_id);
-					INT column_current = (INT)lparam;
-					rstring divider = _r_fmt (L"%c ", DIVIDER_COPY);
+					INT column_count;
+					INT column_current;
 
-					rstring buffer;
+					PR_STRING buffer;
+					PR_STRING string;
+
+					listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
+					item = INVALID_INT;
+
+					column_count = _r_listview_getcolumncount (hwnd, listview_id);
+					column_current = (INT)lparam;
+
+					buffer = _r_obj_createstringbuilder (512 * sizeof (WCHAR));
 
 					while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 					{
 						if (ctrl_id == IDM_COPY)
 						{
 							for (INT column_id = 0; column_id < column_count; column_id++)
-								buffer.Append (_r_listview_getitemtext (hwnd, listview_id, item, column_id)).Append (divider);
+							{
+								string = _r_listview_getitemtext (hwnd, listview_id, item, column_id);
+
+								if (string)
+								{
+									if (!_r_str_isempty (string))
+										_r_string_appendformat (&buffer, L"%s%s", string->Buffer, DIVIDER_COPY);
+
+									_r_obj_dereference (string);
+								}
+							}
+
+							_r_str_trim (buffer, DIVIDER_COPY);
 						}
 						else
 						{
-							buffer.Append (_r_listview_getitemtext (hwnd, listview_id, item, column_current)).Append (divider);
+							string = _r_listview_getitemtext (hwnd, listview_id, item, column_current);
+
+							if (string)
+							{
+								if (!_r_str_isempty (string))
+									_r_string_append (&buffer, string->Buffer);
+
+								_r_obj_dereference (string);
+							}
 						}
 
-						_r_str_trim (buffer, divider.GetString ());
-						buffer.Append (L"\r\n");
+						_r_string_append (&buffer, L"\r\n");
 					}
 
 					_r_str_trim (buffer, DIVIDER_TRIM);
 
-					_r_clipboard_set (hwnd, buffer.GetString (), buffer.GetLength ());
+					if (!_r_str_isempty (buffer))
+						_r_clipboard_set (hwnd, buffer->Buffer, _r_obj_getstringlength (buffer));
+
+					_r_obj_dereference (buffer);
 
 					break;
 				}
@@ -4037,20 +4290,18 @@ find_wrap:
 
 					if (listview_id >= IDC_APPS_PROFILE && listview_id <= IDC_APPS_UWP)
 					{
-						OBJECTS_VEC rules;
+						OBJECTS_APP_VECTOR rules;
 						INT item = INVALID_INT;
 
 						while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 						{
 							SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
-							PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+							PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-							if (!ptr_app_object)
+							if (!ptr_app)
 								continue;
 
-							PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
-
-							if (ptr_app && ptr_app->is_enabled != new_val)
+							if (ptr_app->is_enabled != new_val)
 							{
 								if (!new_val)
 									_app_timer_reset (hwnd, ptr_app);
@@ -4064,7 +4315,7 @@ find_wrap:
 								_app_setappiteminfo (hwnd, listview_id, item, app_hash, ptr_app);
 								_r_fastlock_releaseshared (&lock_checkbox);
 
-								rules.push_back (ptr_app_object);
+								rules.emplace_back (ptr_app);
 
 								is_changed = TRUE;
 
@@ -4072,7 +4323,7 @@ find_wrap:
 							}
 							else
 							{
-								_r_obj2_dereference (ptr_app_object);
+								_r_obj_dereference (ptr_app);
 							}
 						}
 
@@ -4081,27 +4332,25 @@ find_wrap:
 							HANDLE hengine = _wfp_getenginehandle ();
 
 							if (hengine)
-								_wfp_create3filters (hengine, rules, __LINE__);
+								_wfp_create3filters (hengine, &rules, __LINE__);
 
-							_app_freeobjects_vec (rules);
+							_app_freeapps_vec (&rules);
 						}
 					}
 					else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
 					{
-						OBJECTS_VEC rules;
+						OBJECTS_RULE_VECTOR rules;
 						INT item = INVALID_INT;
 
 						while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 						{
 							SIZE_T rule_idx = _r_listview_getitemlparam (hwnd, listview_id, item);
-							PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+							PITEM_RULE ptr_rule = _app_getrulebyid (rule_idx);
 
-							if (!ptr_rule_object)
+							if (!ptr_rule)
 								continue;
 
-							PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-							if (ptr_rule && ptr_rule->is_enabled != new_val)
+							if (ptr_rule->is_enabled != new_val)
 							{
 								_app_ruleenable (ptr_rule, new_val);
 
@@ -4109,7 +4358,7 @@ find_wrap:
 								_app_setruleiteminfo (hwnd, listview_id, item, ptr_rule, TRUE);
 								_r_fastlock_releaseshared (&lock_checkbox);
 
-								rules.push_back (ptr_rule_object);
+								rules.emplace_back (ptr_rule);
 
 								is_changed = TRUE;
 
@@ -4117,7 +4366,7 @@ find_wrap:
 							}
 							else
 							{
-								_r_obj2_dereference (ptr_rule_object);
+								_r_obj_dereference (ptr_rule);
 							}
 						}
 
@@ -4126,9 +4375,9 @@ find_wrap:
 							HANDLE hengine = _wfp_getenginehandle ();
 
 							if (hengine)
-								_wfp_create4filters (hengine, rules, __LINE__);
+								_wfp_create4filters (hengine, &rules, __LINE__);
 
-							_app_freeobjects_vec (rules);
+							_app_freerules_vec (&rules);
 						}
 					}
 
@@ -4137,7 +4386,7 @@ find_wrap:
 						_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 						_app_refreshstatus (hwnd, listview_id);
 
-						_app_profile_save (NULL);
+						_app_profile_save ();
 					}
 
 					break;
@@ -4151,8 +4400,11 @@ find_wrap:
 
 				case IDM_OPENRULESEDITOR:
 				{
-					PITEM_RULE ptr_rule = new ITEM_RULE;
-					PR_OBJECT ptr_rule_object = _r_obj2_allocateex (ptr_rule, &_app_dereferencerule);
+					PITEM_RULE ptr_rule = (PITEM_RULE)_r_obj_allocateex (sizeof (ITEM_RULE), &_app_dereferencerule);
+
+					// initialize stl
+					ptr_rule->apps = new HASHER_MAP;
+					ptr_rule->guids = new GUIDS_VEC;
 
 					_app_ruleenable (ptr_rule, TRUE);
 
@@ -4170,7 +4422,7 @@ find_wrap:
 							SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, item);
 
 							if (_app_isappfound (app_hash))
-								ptr_rule->apps[app_hash] = TRUE;
+								ptr_rule->apps->emplace (app_hash, TRUE);
 						}
 					}
 					else if (listview_id == IDC_NETWORK)
@@ -4186,30 +4438,25 @@ find_wrap:
 
 							if (ptr_network)
 							{
-								if (_r_str_isempty (ptr_rule->pname))
-								{
-									rstring item_text = _r_listview_getitemtext (hwnd, listview_id, item, 0);
-
-									_r_str_alloc (&ptr_rule->pname, item_text.GetLength (), item_text.GetString ());
-								}
+								_r_obj_movereference (&ptr_rule->name, _r_listview_getitemtext (hwnd, listview_id, item, 0));
 
 								if (ptr_network->app_hash && !_r_str_isempty (ptr_network->path))
 								{
 									if (!_app_isappfound (ptr_network->app_hash))
 									{
-										_app_addapplication (hwnd, ptr_network->path, 0, 0, 0, FALSE, FALSE);
+										_app_addapplication (hwnd, ptr_network->path->Buffer, 0, 0, 0, FALSE, FALSE);
 
 										_app_refreshstatus (hwnd, listview_id);
-										_app_profile_save (NULL);
+										_app_profile_save ();
 									}
 
-									ptr_rule->apps[ptr_network->app_hash] = TRUE;
+									ptr_rule->apps->emplace (ptr_network->app_hash, TRUE);
 								}
 
 								ptr_rule->protocol = ptr_network->protocol;
 
-								_app_formataddress (ptr_network->af, 0, &ptr_network->remote_addr, ptr_network->remote_port, &ptr_rule->prule_remote, FMTADDR_AS_RULE);
-								_app_formataddress (ptr_network->af, 0, &ptr_network->local_addr, ptr_network->local_port, &ptr_rule->prule_local, FMTADDR_AS_RULE);
+								_r_obj_movereference (&ptr_rule->rule_remote, _app_formataddress (ptr_network->af, 0, &ptr_network->remote_addr, ptr_network->remote_port, FMTADDR_AS_RULE));
+								_r_obj_movereference (&ptr_rule->rule_local, _app_formataddress (ptr_network->af, 0, &ptr_network->local_addr, ptr_network->local_port, FMTADDR_AS_RULE));
 
 								_r_obj_dereference (ptr_network);
 							}
@@ -4228,41 +4475,42 @@ find_wrap:
 
 							if (ptr_log)
 							{
-								if (_r_str_isempty (ptr_rule->pname))
+								if (_r_str_isempty (ptr_rule->name))
 								{
-									rstring item_text = _r_listview_getitemtext (hwnd, listview_id, item, 0);
+									PR_STRING itemText = _r_listview_getitemtext (hwnd, listview_id, item, 0);
 
-									_r_str_alloc (&ptr_rule->pname, item_text.GetLength (), item_text.GetString ());
+									if (itemText)
+										_r_obj_movereference (&ptr_rule->name, itemText);
 								}
 
 								if (ptr_log->app_hash && !_r_str_isempty (ptr_log->path))
 								{
 									if (!_app_isappfound (ptr_log->app_hash))
 									{
-										_app_addapplication (hwnd, ptr_log->path, 0, 0, 0, FALSE, FALSE);
+										_app_addapplication (hwnd, ptr_log->path->Buffer, 0, 0, 0, FALSE, FALSE);
 
 										_app_refreshstatus (hwnd, listview_id);
-										_app_profile_save (NULL);
+										_app_profile_save ();
 									}
 
-									ptr_rule->apps[ptr_log->app_hash] = TRUE;
+									ptr_rule->apps->emplace (ptr_log->app_hash, TRUE);
 								}
 
 								ptr_rule->protocol = ptr_log->protocol;
 								ptr_rule->direction = ptr_log->direction;
 
-								_app_formataddress (ptr_log->af, 0, &ptr_log->remote_addr, ptr_log->remote_port, &ptr_rule->prule_remote, FMTADDR_AS_RULE);
-								_app_formataddress (ptr_log->af, 0, &ptr_log->local_addr, ptr_log->local_port, &ptr_rule->prule_local, FMTADDR_AS_RULE);
+								_r_obj_movereference (&ptr_rule->rule_remote, _app_formataddress (ptr_log->af, 0, &ptr_log->remote_addr, ptr_log->remote_port, FMTADDR_AS_RULE));
+								_r_obj_movereference (&ptr_rule->rule_local, _app_formataddress (ptr_log->af, 0, &ptr_log->local_addr, ptr_log->local_port, FMTADDR_AS_RULE));
 
 								_r_obj_dereference (ptr_log);
 							}
 						}
 					}
 
-					if (DialogBoxParam (NULL, MAKEINTRESOURCE (IDD_EDITOR), hwnd, &EditorProc, (LPARAM)ptr_rule_object))
+					if (DialogBoxParam (NULL, MAKEINTRESOURCE (IDD_EDITOR), hwnd, &EditorProc, (LPARAM)ptr_rule))
 					{
 						SIZE_T rule_idx = rules_arr.size ();
-						rules_arr.push_back (_r_obj2_reference (ptr_rule_object));
+						rules_arr.emplace_back ((PITEM_RULE)_r_obj_reference (ptr_rule));
 
 						INT listview_rules_id = _app_getlistview_id (DataRuleCustom);
 
@@ -4272,7 +4520,7 @@ find_wrap:
 
 							_r_fastlock_acquireshared (&lock_checkbox);
 
-							_r_listview_additem (hwnd, listview_rules_id, item_id, 0, ptr_rule->pname, _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), rule_idx);
+							_r_listview_additemex (hwnd, listview_rules_id, item_id, 0, _r_obj_getstringordefault (ptr_rule->name, SZ_EMPTY), _app_getruleicon (ptr_rule), _app_getrulegroup (ptr_rule), rule_idx);
 							_app_setruleiteminfo (hwnd, listview_rules_id, item_id, ptr_rule, TRUE);
 
 							_r_fastlock_releaseshared (&lock_checkbox);
@@ -4281,10 +4529,10 @@ find_wrap:
 						_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 						_app_refreshstatus (hwnd, listview_id);
 
-						_app_profile_save (NULL);
+						_app_profile_save ();
 					}
 
-					_r_obj2_dereference (ptr_rule_object);
+					_r_obj_dereference (ptr_rule);
 
 					break;
 				}
@@ -4313,25 +4561,22 @@ find_wrap:
 					else if (listview_id >= IDC_RULES_BLOCKLIST && listview_id <= IDC_RULES_CUSTOM)
 					{
 						SIZE_T rule_idx = _r_listview_getitemlparam (hwnd, listview_id, item);
-						PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+						PITEM_RULE ptr_rule = _app_getrulebyid (rule_idx);
 
-						if (!ptr_rule_object)
+						if (!ptr_rule)
 							break;
 
-						if (DialogBoxParam (NULL, MAKEINTRESOURCE (IDD_EDITOR), hwnd, &EditorProc, (LPARAM)ptr_rule_object))
+						if (DialogBoxParam (NULL, MAKEINTRESOURCE (IDD_EDITOR), hwnd, &EditorProc, (LPARAM)ptr_rule))
 						{
-							PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
-
-							if (ptr_rule)
-								_app_setruleiteminfo (hwnd, listview_id, item, ptr_rule, TRUE);
+							_app_setruleiteminfo (hwnd, listview_id, item, ptr_rule, TRUE);
 
 							_app_listviewsort (hwnd, listview_id, INVALID_INT, FALSE);
 							_app_refreshstatus (hwnd, listview_id);
 
-							_app_profile_save (NULL);
+							_app_profile_save ();
 						}
 
-						_r_obj2_dereference (ptr_rule_object);
+						_r_obj_dereference (ptr_rule);
 					}
 					else if (listview_id == IDC_NETWORK)
 					{
@@ -4345,10 +4590,10 @@ find_wrap:
 						{
 							if (!_app_isappfound (ptr_network->app_hash))
 							{
-								_app_addapplication (hwnd, ptr_network->path, 0, 0, 0, FALSE, FALSE);
+								_app_addapplication (hwnd, ptr_network->path->Buffer, 0, 0, 0, FALSE, FALSE);
 
 								_app_refreshstatus (hwnd, listview_id);
-								_app_profile_save (NULL);
+								_app_profile_save ();
 							}
 
 							INT app_listview_id = (INT)_app_getappinfo (ptr_network->app_hash, InfoListviewId);
@@ -4374,10 +4619,10 @@ find_wrap:
 						{
 							if (!_app_isappfound (ptr_log->app_hash))
 							{
-								_app_addapplication (hwnd, ptr_log->path, 0, 0, 0, FALSE, FALSE);
+								_app_addapplication (hwnd, ptr_log->path->Buffer, 0, 0, 0, FALSE, FALSE);
 
 								_app_refreshstatus (hwnd, listview_id);
-								_app_profile_save (NULL);
+								_app_profile_save ();
 							}
 
 							INT app_listview_id = (INT)_app_getappinfo (ptr_log->app_hash, InfoListviewId);
@@ -4448,17 +4693,25 @@ find_wrap:
 
 				case IDM_DELETE:
 				{
-					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
+					INT listview_id;
+					INT selected;
+					INT count;
+					WCHAR messageText[512];
+
+					listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
 					if (listview_id != IDC_APPS_PROFILE && listview_id != IDC_RULES_CUSTOM)
 						break;
 
-					INT selected = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETSELECTEDCOUNT, 0, 0);
-
-					if (!selected || app.ShowMessage (hwnd, MB_YESNO | MB_ICONEXCLAMATION, NULL, NULL, _r_fmt (app.LocaleString (IDS_QUESTION_DELETE, NULL).GetString (), selected).GetString ()) != IDYES)
+					if (!(selected = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETSELECTEDCOUNT, 0, 0)))
 						break;
 
-					INT count = _r_listview_getitemcount (hwnd, listview_id, FALSE) - 1;
+					_r_str_printf (messageText, RTL_NUMBER_OF (messageText), _r_locale_getstring (IDS_QUESTION_DELETE), selected);
+
+					if (_r_show_message (hwnd, MB_YESNO | MB_ICONEXCLAMATION, NULL, NULL, messageText) != IDYES)
+						break;
+
+					count = _r_listview_getitemcount (hwnd, listview_id, FALSE) - 1;
 
 					GUIDS_VEC guids;
 
@@ -4469,16 +4722,14 @@ find_wrap:
 							if (listview_id == IDC_APPS_PROFILE)
 							{
 								SIZE_T app_hash = _r_listview_getitemlparam (hwnd, listview_id, i);
-								PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+								PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-								if (!ptr_app_object)
+								if (!ptr_app)
 									continue;
 
-								PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
-
-								if (ptr_app && !ptr_app->is_undeletable) // skip "undeletable" apps
+								if (!ptr_app->is_undeletable) // skip "undeletable" apps
 								{
-									guids.insert (guids.end (), ptr_app->guids.begin (), ptr_app->guids.end ());
+									guids.insert (guids.end (), ptr_app->guids->begin (), ptr_app->guids->end ());
 
 									SendDlgItemMessage (hwnd, listview_id, LVM_DELETEITEM, (WPARAM)i, 0);
 
@@ -4487,71 +4738,64 @@ find_wrap:
 
 									_app_freeapplication (app_hash);
 
-									_r_obj2_dereferenceex (ptr_app_object, 2);
+									_r_obj_dereferenceex (ptr_app, 2);
 								}
 								else
 								{
-									_r_obj2_dereference (ptr_app_object);
+									_r_obj_dereference (ptr_app);
 								}
 							}
 							else if (listview_id == IDC_RULES_CUSTOM)
 							{
 								SIZE_T rule_idx = _r_listview_getitemlparam (hwnd, listview_id, i);
-								PR_OBJECT ptr_rule_object = _app_getrulebyid (rule_idx);
+								PITEM_RULE ptr_rule = _app_getrulebyid (rule_idx);
 
-								if (!ptr_rule_object)
+								if (!ptr_rule)
 									continue;
-
-								PITEM_RULE ptr_rule = (PITEM_RULE)ptr_rule_object->pdata;
 
 								HASHER_MAP apps_checker;
 
-								if (ptr_rule && !ptr_rule->is_readonly) // skip "read-only" rules
+								if (!ptr_rule->is_readonly) // skip "read-only" rules
 								{
-									guids.insert (guids.end (), ptr_rule->guids.begin (), ptr_rule->guids.end ());
+									guids.insert (guids.end (), ptr_rule->guids->begin (), ptr_rule->guids->end ());
 
-									for (auto &p : ptr_rule->apps)
-										apps_checker[p.first] = TRUE;
+									for (auto it = ptr_rule->apps->begin (); it != ptr_rule->apps->end (); ++it)
+										apps_checker.emplace (it->first, TRUE);
 
 									SendDlgItemMessage (hwnd, listview_id, LVM_DELETEITEM, (WPARAM)i, 0);
 
 									rules_arr.at (rule_idx) = NULL;
 
-									_r_obj2_dereferenceex (ptr_rule_object, 2);
+									_r_obj_dereferenceex (ptr_rule, 2);
 								}
 								else
 								{
-									_r_obj2_dereference (ptr_rule_object);
+									_r_obj_dereference (ptr_rule);
 								}
 
-								for (auto &p : apps_checker)
+								for (auto it = apps_checker.begin (); it != apps_checker.end (); ++it)
 								{
-									SIZE_T app_hash = p.first;
-									PR_OBJECT ptr_app_object = _app_getappitem (app_hash);
+									SIZE_T app_hash = it->first;
+									PITEM_APP ptr_app = _app_getappitem (app_hash);
 
-									if (!ptr_app_object)
+									if (!ptr_app)
 										continue;
 
-									PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+									INT app_listview_id = _app_getlistview_id (ptr_app->type);
 
-									if (ptr_app)
+									if (app_listview_id)
 									{
-										INT app_listview_id = _app_getlistview_id (ptr_app->type);
+										INT item_pos = _app_getposition (hwnd, app_listview_id, app_hash);
 
-										if (app_listview_id)
+										if (item_pos != INVALID_INT)
 										{
-											INT item_pos = _app_getposition (hwnd, app_listview_id, app_hash);
-
-											if (item_pos != INVALID_INT)
-											{
-												_r_fastlock_acquireshared (&lock_checkbox);
-												_app_setappiteminfo (hwnd, app_listview_id, item_pos, app_hash, ptr_app);
-												_r_fastlock_releaseshared (&lock_checkbox);
-											}
+											_r_fastlock_acquireshared (&lock_checkbox);
+											_app_setappiteminfo (hwnd, app_listview_id, item_pos, app_hash, ptr_app);
+											_r_fastlock_releaseshared (&lock_checkbox);
 										}
 									}
 
-									_r_obj2_dereference (ptr_app_object);
+									_r_obj_dereference (ptr_app);
 								}
 							}
 						}
@@ -4560,10 +4804,10 @@ find_wrap:
 					HANDLE hengine = _wfp_getenginehandle ();
 
 					if (hengine)
-						_wfp_destroyfilters_array (hengine, guids, __LINE__);
+						_wfp_destroyfilters_array (hengine, &guids, __LINE__);
 
 					_app_refreshstatus (hwnd, INVALID_INT);
-					_app_profile_save (NULL);
+					_app_profile_save ();
 
 					break;
 				}
@@ -4573,19 +4817,17 @@ find_wrap:
 					BOOLEAN is_deleted = FALSE;
 
 					GUIDS_VEC guids;
-					std::vector<SIZE_T> apps_list;
+					HASH_VEC apps_list;
 
-					for (auto &p : apps)
+					for (auto it = apps.begin (); it != apps.end (); ++it)
 					{
-						PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
-
-						if (!ptr_app_object)
+						if (!it->second)
 							continue;
 
-						SIZE_T app_hash = p.first;
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						SIZE_T app_hash = it->first;
+						PITEM_APP ptr_app = (PITEM_APP)_r_obj_reference (it->second);
 
-						if (ptr_app && !ptr_app->is_undeletable && (!_app_isappexists (ptr_app) || ((ptr_app->type != DataAppService && ptr_app->type != DataAppUWP) && !_app_isappused (ptr_app, app_hash))))
+						if (!ptr_app->is_undeletable && (!_app_isappexists (ptr_app) || ((ptr_app->type != DataAppService && ptr_app->type != DataAppUWP) && !_app_isappused (ptr_app, app_hash))))
 						{
 							INT app_listview_id = _app_getlistview_id (ptr_app->type);
 
@@ -4600,28 +4842,28 @@ find_wrap:
 							_app_timer_reset (hwnd, ptr_app);
 							_app_freenotify (app_hash, ptr_app);
 
-							guids.insert (guids.end (), ptr_app->guids.begin (), ptr_app->guids.end ());
+							guids.insert (guids.end (), ptr_app->guids->begin (), ptr_app->guids->end ());
 
-							apps_list.push_back (app_hash);
+							apps_list.emplace_back (app_hash);
 
 							is_deleted = TRUE;
 						}
 
-						_r_obj2_dereference (ptr_app_object);
+						_r_obj_dereference (ptr_app);
 					}
 
-					for (auto &p : apps_list)
-						_app_freeapplication (p);
+					for (auto it = apps_list.begin (); it != apps_list.end (); ++it)
+						_app_freeapplication (*it);
 
 					if (is_deleted)
 					{
 						HANDLE hengine = _wfp_getenginehandle ();
 
 						if (hengine)
-							_wfp_destroyfilters_array (hengine, guids, __LINE__);
+							_wfp_destroyfilters_array (hengine, &guids, __LINE__);
 
 						_app_refreshstatus (hwnd, INVALID_INT);
-						_app_profile_save (NULL);
+						_app_profile_save ();
 					}
 
 					break;
@@ -4629,40 +4871,38 @@ find_wrap:
 
 				case IDM_PURGE_TIMERS:
 				{
-					if (!_app_istimersactive () || app.ShowMessage (hwnd, MB_YESNO | MB_ICONEXCLAMATION, NULL, NULL, app.LocaleString (IDS_QUESTION_TIMERS, NULL).GetString ()) != IDYES)
+					if (!_app_istimersactive () || _r_show_message (hwnd, MB_YESNO | MB_ICONEXCLAMATION, NULL, NULL, _r_locale_getstring (IDS_QUESTION_TIMERS)) != IDYES)
 						break;
 
-					OBJECTS_VEC rules;
+					OBJECTS_APP_VECTOR rules;
 
-					for (auto &p : apps)
+					for (auto it = apps.begin (); it != apps.end (); ++it)
 					{
-						PR_OBJECT ptr_app_object = _r_obj2_reference (p.second);
-
-						if (!ptr_app_object)
+						if (!it->second)
 							continue;
 
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						PITEM_APP ptr_app = (PITEM_APP)_r_obj_reference (it->second);
 
-						if (ptr_app && _app_istimeractive (ptr_app))
+						if (_app_istimeractive (ptr_app))
 						{
 							_app_timer_reset (hwnd, ptr_app);
 
-							rules.push_back (ptr_app_object);
+							rules.emplace_back (ptr_app);
 						}
 						else
 						{
-							_r_obj2_dereference (ptr_app_object);
+							_r_obj_dereference (ptr_app);
 						}
 					}
 
 					HANDLE hengine = _wfp_getenginehandle ();
 
 					if (hengine)
-						_wfp_create3filters (hengine, rules, __LINE__);
+						_wfp_create3filters (hengine, &rules, __LINE__);
 
-					_app_freeobjects_vec (rules);
+					_app_freeapps_vec (&rules);
 
-					_app_profile_save (NULL);
+					_app_profile_save ();
 
 					INT listview_id = (INT)_r_tab_getlparam (hwnd, IDC_TAB, INVALID_INT);
 
@@ -4714,26 +4954,21 @@ find_wrap:
 					InetPton (ptr_log->af, RM_AD, &ptr_log->remote_addr);
 					ptr_log->remote_port = RP_AD;
 
-					_r_str_alloc (&ptr_log->path, _r_str_length (app.GetBinaryPath ()), app.GetBinaryPath ());
-					_r_str_alloc (&ptr_log->filter_name, _r_str_length (FN_AD), FN_AD);
+					ptr_log->path = _r_obj_createstring (_r_app_getbinarypath ());
+					ptr_log->filter_name = _r_obj_createstring (FN_AD);
 
 					//_app_formataddress (ptr_log->af, ptr_log->protocol, &ptr_log->remote_addr, 0, &ptr_log->remote_fmt, FMTADDR_USE_PROTOCOL | FMTADDR_RESOLVE_HOST);
 					//_app_formataddress (ptr_log->af, ptr_log->protocol, &ptr_log->local_addr, 0, &ptr_log->local_fmt, FMTADDR_USE_PROTOCOL | FMTADDR_RESOLVE_HOST);
 
-					PR_OBJECT ptr_app_object = _app_getappitem (config.my_hash);
+					PITEM_APP ptr_app = _app_getappitem (config.my_hash);
 
-					if (ptr_app_object)
+					if (ptr_app)
 					{
-						PITEM_APP ptr_app = (PITEM_APP)ptr_app_object->pdata;
+						ptr_app->last_notify = 0;
 
-						if (ptr_app)
-						{
-							ptr_app->last_notify = 0;
+						_app_notifyadd (config.hnotification, ptr_log, ptr_app);
 
-							_app_notifyadd (config.hnotification, ptr_log, ptr_app);
-						}
-
-						_r_obj2_dereference (ptr_app_object);
+						_r_obj_dereference (ptr_app);
 					}
 
 					break;
@@ -4756,8 +4991,8 @@ find_wrap:
 					IN_ADDR ipv4_remote = {0};
 					IN_ADDR ipv4_local = {0};
 
-					rstring path = app.GetBinaryPath ();
-					_r_path_ntpathfromdos (path);
+					PR_STRING ntPath = NULL;
+					_r_path_ntpathfromdos (_r_app_getbinarypath (), &ntPath);
 
 					UINT16 layer_id = 0;
 					UINT64 filter_id = 0;
@@ -4789,14 +5024,22 @@ find_wrap:
 
 					for (UINT i = 0; i < 255; i++)
 					{
-						RtlIpv4StringToAddress (_r_fmt (RM_AD2, i + 1), TRUE, &terminator, &ipv4_remote);
-						RtlIpv4StringToAddress (_r_fmt (LM_AD2, i + 1), TRUE, &terminator, &ipv4_local);
+						WCHAR addressLocalString[256];
+						WCHAR addressRemoteString[256];
+
+						_r_str_printf (addressLocalString, RTL_NUMBER_OF (addressLocalString), LM_AD2, i + 1);
+						_r_str_printf (addressRemoteString, RTL_NUMBER_OF (addressRemoteString), RM_AD2, i + 1);
+
+						RtlIpv4StringToAddress (addressLocalString, TRUE, &terminator, &ipv4_local);
+						RtlIpv4StringToAddress (addressRemoteString, TRUE, &terminator, &ipv4_remote);
 
 						UINT32 remote_addr = _r_byteswap_ulong (ipv4_remote.S_un.S_addr);
 						UINT32 local_addr = _r_byteswap_ulong (ipv4_local.S_un.S_addr);
 
-						_wfp_logcallback (flags, &ft, (UINT8*)path.GetString (), NULL, (SID*)config.pbuiltin_admins_sid, IPPROTO_TCP, FWP_IP_VERSION_V4, remote_addr, NULL, RP_AD, local_addr, NULL, LP_AD, layer_id, filter_id, FWP_DIRECTION_OUTBOUND, FALSE, FALSE);
+						_wfp_logcallback (flags, &ft, (UINT8*)_r_obj_getstring (ntPath), NULL, (SID*)config.pbuiltin_admins_sid, IPPROTO_TCP, FWP_IP_VERSION_V4, remote_addr, NULL, RP_AD, local_addr, NULL, LP_AD, layer_id, filter_id, FWP_DIRECTION_OUTBOUND, FALSE, FALSE);
 					}
+
+					SAFE_DELETE_REFERENCE (ntPath);
 
 					break;
 				}
@@ -4812,13 +5055,13 @@ find_wrap:
 
 INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, INT nCmdShow)
 {
-	MSG msg = {0};
+	MSG msg;
 
-	if (app.Initialize (APP_NAME, APP_NAME_SHORT, APP_VERSION, APP_COPYRIGHT))
+	if (_r_app_initialize (APP_NAME, APP_NAME_SHORT, APP_VERSION, APP_COPYRIGHT))
 	{
 		// parse arguments
 		{
-			INT numargs = 0;
+			INT numargs;
 			LPWSTR* arga = CommandLineToArgvW (GetCommandLine (), &numargs);
 
 			if (arga)
@@ -4830,20 +5073,20 @@ INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdL
 
 				for (INT i = 0; i < numargs; i++)
 				{
-					if (_r_str_compare_length (arga[i], L"/install", 8) == 0)
+					if (_r_str_compare (arga[i], L"/install") == 0)
 						is_install = TRUE;
 
-					else if (_r_str_compare_length (arga[i], L"/uninstall", 10) == 0)
+					else if (_r_str_compare (arga[i], L"/uninstall") == 0)
 						is_uninstall = TRUE;
 
-					else if (_r_str_compare_length (arga[i], L"/silent", 7) == 0)
+					else if (_r_str_compare (arga[i], L"/silent") == 0)
 						is_silent = TRUE;
 
-					else if (_r_str_compare_length (arga[i], L"/temp", 5) == 0)
+					else if (_r_str_compare (arga[i], L"/temp") == 0)
 						is_temporary = TRUE;
 				}
 
-				SAFE_DELETE_LOCAL (arga);
+				LocalFree (arga);
 
 				if (is_install || is_uninstall)
 				{
@@ -4890,9 +5133,9 @@ INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdL
 			}
 		}
 
-		if (app.CreateMainWindow (IDD_MAIN, IDI_MAIN, &DlgProc))
+		if (_r_app_createwindow (IDD_MAIN, IDI_MAIN, &DlgProc))
 		{
-			HACCEL haccel = LoadAccelerators (app.GetHINSTANCE (), MAKEINTRESOURCE (IDA_MAIN));
+			HACCEL haccel = LoadAccelerators (_r_app_gethinstance (), MAKEINTRESOURCE (IDA_MAIN));
 
 			if (haccel)
 			{
@@ -4912,5 +5155,5 @@ INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdL
 		}
 	}
 
-	return (INT)msg.wParam;
+	return ERROR_SUCCESS;
 }
