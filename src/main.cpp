@@ -503,19 +503,22 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 			_r_config_setboolean (L"IsSecureFilters", new_val);
 			_r_menu_checkitem (hmenu, IDM_SECUREFILTERS_CHK, 0, MF_BYCOMMAND, new_val);
 
-			HANDLE hengine = _wfp_getenginehandle ();
-
-			if (hengine)
+			if (_wfp_isfiltersinstalled ())
 			{
-				GUIDS_VEC filter_all;
+				HANDLE hengine = _wfp_getenginehandle ();
 
-				_app_setsecurityinfoforprovider (hengine, &GUID_WfpProvider, new_val);
-				_app_setsecurityinfoforsublayer (hengine, &GUID_WfpSublayer, new_val);
-
-				if (_wfp_dumpfilters (hengine, &GUID_WfpProvider, &filter_all))
+				if (hengine)
 				{
-					for (auto it = filter_all.begin (); it != filter_all.end (); ++it)
-						_app_setsecurityinfoforfilter (hengine, &(*it), new_val, __LINE__);
+					GUIDS_VEC filter_all;
+
+					_app_setsecurityinfoforprovider (hengine, &GUID_WfpProvider, new_val);
+					_app_setsecurityinfoforsublayer (hengine, &GUID_WfpSublayer, new_val);
+
+					if (_wfp_dumpfilters (hengine, &GUID_WfpProvider, &filter_all))
+					{
+						for (auto it = filter_all.begin (); it != filter_all.end (); ++it)
+							_app_setsecurityinfoforfilter (hengine, &(*it), new_val, __LINE__);
+					}
 				}
 			}
 
@@ -598,10 +601,13 @@ VOID _app_config_apply (HWND hwnd, INT ctrl_id)
 		}
 	}
 
-	HANDLE hengine = _wfp_getenginehandle ();
+	if (_wfp_isfiltersinstalled ())
+	{
+		HANDLE hengine = _wfp_getenginehandle ();
 
-	if (hengine)
-		_wfp_create2filters (hengine, __LINE__);
+		if (hengine)
+			_wfp_create2filters (hengine, __LINE__);
+	}
 }
 
 INT_PTR CALLBACK SettingsProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
@@ -1718,7 +1724,7 @@ VOID _app_tabs_init (HWND hwnd)
 	SetWindowPos (GetDlgItem (hwnd, IDC_TAB), NULL, 0, 0, _r_calc_rectwidth (INT, &rc), _r_calc_rectheight (INT, &rc), SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
 
 	PR_STRING localizedString = NULL;
-	HINSTANCE hinst = _r_app_gethinstance ();
+	HINSTANCE hinst = _r_sys_getimagebase ();
 	DWORD listview_ex_style = LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_INFOTIP | LVS_EX_LABELTIP | LVS_EX_CHECKBOXES | LVS_EX_HEADERINALLVIEWS;
 	DWORD listview_style = WS_CHILD | WS_TABSTOP | LVS_SHOWSELALWAYS | LVS_REPORT | LVS_SHAREIMAGELISTS | LVS_AUTOARRANGE;
 	INT tabs_count = 0;
@@ -1872,7 +1878,7 @@ VOID _app_initialize ()
 	config.shell32_path = _r_path_expand (PATH_SHELL32);
 	config.winstore_path = _r_path_expand (PATH_WINSTORE);
 
-	config.my_hash = _r_str_hash (_r_app_getbinarypath ());
+	config.my_hash = _r_str_hash (_r_sys_getimagepathname ());
 	config.ntoskrnl_hash = _r_str_hash (PROC_SYSTEM_NAME);
 	config.svchost_hash = _r_str_hash (config.svchost_path);
 
@@ -2103,7 +2109,7 @@ find_wrap:
 
 		case RM_INITIALIZE:
 		{
-			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_app_gethinstance (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
+			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_sys_getimagebase (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
 
 			HMENU hmenu = GetMenu (hwnd);
 
@@ -2461,7 +2467,7 @@ find_wrap:
 		{
 			// refresh tray icon
 			_r_tray_destroy (hwnd, UID);
-			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_app_gethinstance (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
+			_r_tray_create (hwnd, UID, WM_TRAYICON, _r_app_getsharedimage (_r_sys_getimagebase (), (_wfp_isfiltersinstalled () != InstallDisabled) ? IDI_ACTIVE : IDI_INACTIVE, _r_dc_getsystemmetrics (hwnd, SM_CXSMICON)), APP_NAME, FALSE);
 
 			break;
 		}
@@ -2734,7 +2740,7 @@ find_wrap:
 				case LVN_GETINFOTIP:
 				{
 					LPNMLVGETINFOTIP lpnmlv = (LPNMLVGETINFOTIP)lparam;
-					PR_STRING string = _app_gettooltip (hwnd, lpnmlv);
+					PR_STRING string = _app_gettooltip (hwnd, (INT)lpnmlv->hdr.idFrom, lpnmlv->iItem);
 
 					if (string)
 					{
@@ -2787,10 +2793,13 @@ find_wrap:
 
 									rules.emplace_back (ptr_app);
 
-									HANDLE hengine = _wfp_getenginehandle ();
+									if (_wfp_isfiltersinstalled ())
+									{
+										HANDLE hengine = _wfp_getenginehandle ();
 
-									if (hengine)
-										_wfp_create3filters (hengine, &rules, __LINE__);
+										if (hengine)
+											_wfp_create3filters (hengine, &rules, __LINE__);
+									}
 
 									is_changed = TRUE;
 								}
@@ -2818,10 +2827,13 @@ find_wrap:
 
 									rules.emplace_back (ptr_rule);
 
-									HANDLE hengine = _wfp_getenginehandle ();
+									if (_wfp_isfiltersinstalled ())
+									{
+										HANDLE hengine = _wfp_getenginehandle ();
 
-									if (hengine)
-										_wfp_create4filters (hengine, &rules, __LINE__);
+										if (hengine)
+											_wfp_create4filters (hengine, &rules, __LINE__);
+									}
 
 									is_changed = TRUE;
 								}
@@ -3419,10 +3431,13 @@ find_wrap:
 				OBJECTS_RULE_VECTOR rules;
 				rules.emplace_back (ptr_rule);
 
-				HANDLE hengine = _wfp_getenginehandle ();
+				if (_wfp_isfiltersinstalled ())
+				{
+					HANDLE hengine = _wfp_getenginehandle ();
 
-				if (hengine)
-					_wfp_create4filters (hengine, &rules, __LINE__);
+					if (hengine)
+						_wfp_create4filters (hengine, &rules, __LINE__);
+				}
 
 				_r_obj_dereference (ptr_rule);
 
@@ -3458,10 +3473,13 @@ find_wrap:
 					rules.emplace_back (ptr_app);
 				}
 
-				HANDLE hengine = _wfp_getenginehandle ();
+				if (_wfp_isfiltersinstalled ())
+				{
+					HANDLE hengine = _wfp_getenginehandle ();
 
-				if (hengine)
-					_wfp_create3filters (hengine, &rules, __LINE__);
+					if (hengine)
+						_wfp_create3filters (hengine, &rules, __LINE__);
+				}
 
 				_app_freeapps_vec (&rules);
 
@@ -4233,7 +4251,7 @@ find_wrap:
 					column_count = _r_listview_getcolumncount (hwnd, listview_id);
 					column_current = (INT)lparam;
 
-					buffer = _r_obj_createstringbuilder (512 * sizeof (WCHAR));
+					buffer = _r_obj_createstringbuilder ();
 
 					while ((item = (INT)SendDlgItemMessage (hwnd, listview_id, LVM_GETNEXTITEM, (WPARAM)item, LVNI_SELECTED)) != INVALID_INT)
 					{
@@ -4329,10 +4347,13 @@ find_wrap:
 
 						if (is_changed)
 						{
-							HANDLE hengine = _wfp_getenginehandle ();
+							if (_wfp_isfiltersinstalled ())
+							{
+								HANDLE hengine = _wfp_getenginehandle ();
 
-							if (hengine)
-								_wfp_create3filters (hengine, &rules, __LINE__);
+								if (hengine)
+									_wfp_create3filters (hengine, &rules, __LINE__);
+							}
 
 							_app_freeapps_vec (&rules);
 						}
@@ -4372,10 +4393,13 @@ find_wrap:
 
 						if (is_changed)
 						{
-							HANDLE hengine = _wfp_getenginehandle ();
+							if (_wfp_isfiltersinstalled ())
+							{
+								HANDLE hengine = _wfp_getenginehandle ();
 
-							if (hengine)
-								_wfp_create4filters (hengine, &rules, __LINE__);
+								if (hengine)
+									_wfp_create4filters (hengine, &rules, __LINE__);
+							}
 
 							_app_freerules_vec (&rules);
 						}
@@ -4801,10 +4825,13 @@ find_wrap:
 						}
 					}
 
-					HANDLE hengine = _wfp_getenginehandle ();
+					if (_wfp_isfiltersinstalled ())
+					{
+						HANDLE hengine = _wfp_getenginehandle ();
 
-					if (hengine)
-						_wfp_destroyfilters_array (hengine, &guids, __LINE__);
+						if (hengine)
+							_wfp_destroyfilters_array (hengine, &guids, __LINE__);
+					}
 
 					_app_refreshstatus (hwnd, INVALID_INT);
 					_app_profile_save ();
@@ -4857,10 +4884,13 @@ find_wrap:
 
 					if (is_deleted)
 					{
-						HANDLE hengine = _wfp_getenginehandle ();
+						if (_wfp_isfiltersinstalled ())
+						{
+							HANDLE hengine = _wfp_getenginehandle ();
 
-						if (hengine)
-							_wfp_destroyfilters_array (hengine, &guids, __LINE__);
+							if (hengine)
+								_wfp_destroyfilters_array (hengine, &guids, __LINE__);
+						}
 
 						_app_refreshstatus (hwnd, INVALID_INT);
 						_app_profile_save ();
@@ -4895,10 +4925,13 @@ find_wrap:
 						}
 					}
 
-					HANDLE hengine = _wfp_getenginehandle ();
+					if (_wfp_isfiltersinstalled ())
+					{
+						HANDLE hengine = _wfp_getenginehandle ();
 
-					if (hengine)
-						_wfp_create3filters (hengine, &rules, __LINE__);
+						if (hengine)
+							_wfp_create3filters (hengine, &rules, __LINE__);
+					}
 
 					_app_freeapps_vec (&rules);
 
@@ -5062,7 +5095,7 @@ INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdL
 		// parse arguments
 		{
 			INT numargs;
-			LPWSTR* arga = CommandLineToArgvW (GetCommandLine (), &numargs);
+			LPWSTR* arga = CommandLineToArgvW (_r_sys_getimagecommandline (), &numargs);
 
 			if (arga)
 			{
@@ -5135,7 +5168,7 @@ INT APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdL
 
 		if (_r_app_createwindow (IDD_MAIN, IDI_MAIN, &DlgProc))
 		{
-			HACCEL haccel = LoadAccelerators (_r_app_gethinstance (), MAKEINTRESOURCE (IDA_MAIN));
+			HACCEL haccel = LoadAccelerators (_r_sys_getimagebase (), MAKEINTRESOURCE (IDA_MAIN));
 
 			if (haccel)
 			{

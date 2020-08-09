@@ -59,10 +59,13 @@ BOOLEAN _app_notifycommand (HWND hwnd, INT button_id, time_t seconds)
 
 	ptr_app->last_notify = _r_unixtime_now ();
 
-	HANDLE hengine = _wfp_getenginehandle ();
+	if (_wfp_isfiltersinstalled ())
+	{
+		HANDLE hengine = _wfp_getenginehandle ();
 
-	if (hengine)
-		_wfp_create3filters (hengine, &rules, __LINE__);
+		if (hengine)
+			_wfp_create3filters (hengine, &rules, __LINE__);
+	}
 
 	_app_freeapps_vec (&rules);
 
@@ -355,7 +358,7 @@ VOID _app_notifysetpos (HWND hwnd, BOOLEAN is_forced)
 		if (GetWindowRect (hwnd, &windowRect))
 		{
 			_r_wnd_adjustwindowrect (hwnd, &windowRect);
-			SetWindowPos (hwnd, NULL, windowRect.left, windowRect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+			SetWindowPos (hwnd, NULL, windowRect.left, windowRect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
 
 			return;
 		}
@@ -401,7 +404,7 @@ VOID _app_notifysetpos (HWND hwnd, BOOLEAN is_forced)
 						windowRect.top = (desktopRect.bottom - _r_calc_rectheight (LONG, &windowRect)) - border_x;
 					}
 
-					SetWindowPos (hwnd, NULL, windowRect.left, windowRect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+					SetWindowPos (hwnd, NULL, windowRect.left, windowRect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
 					return;
 				}
 			}
@@ -798,13 +801,7 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 
 								if (item_id != INVALID_INT)
 								{
-									NMLVGETINFOTIP nmlvgit = {0};
-
-									nmlvgit.hdr.idFrom = (UINT_PTR)listview_id;
-									nmlvgit.iItem = item_id;
-									nmlvgit.lParam = 0;
-
-									PR_STRING string = _app_gettooltip (_r_app_gethwnd (), &nmlvgit);
+									PR_STRING string = _app_gettooltip (_r_app_gethwnd (), listview_id, item_id);
 
 									if (string)
 									{
@@ -922,10 +919,13 @@ INT_PTR CALLBACK NotificationProc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lp
 							OBJECTS_RULE_VECTOR rules;
 							rules.emplace_back (ptr_rule);
 
-							HANDLE hengine = _wfp_getenginehandle ();
+							if (_wfp_isfiltersinstalled ())
+							{
+								HANDLE hengine = _wfp_getenginehandle ();
 
-							if (hengine)
-								_wfp_create4filters (hengine, &rules, __LINE__);
+								if (hengine)
+									_wfp_create4filters (hengine, &rules, __LINE__);
+							}
 
 							if (listview_id == app_listview_id || listview_id == rule_listview_id)
 							{
