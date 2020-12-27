@@ -1,3 +1,28 @@
+v3.2.4 (5 September 2020)
+- removed assertion from release builds (issue #764)
+- removed user service instance from the list (win10+)
+- fixed parsing not existing apps (issue #732, #739)
+- displays incorrect name on timer expiration
+- check app timer expiration on profile load
+- incorrect read-only rules tooltip markup
+- create filter does not report errors
+- fixed checking of file attributes
+- fixed parsing ip/port ranges
+- cosmetic fixes
+- fixed bugs
+
+v3.2.3 (25 August 2020)
+- added ncsi system rule (issue #709)
+- added command line mutex checking (issue #750)
+- added noficitation window redraw (issue #731)
+- use logical sorting order (issue #735)
+- check for provider status before create filters
+- do not highlight connections in log tab
+- fixed support oldest win7 versions (issue #737)
+- removed listview empty markup
+- cosmetic fixes
+- fixed bugs
+
 v3.2.2 (29 July 2020)
 - user rules broken with 3.2.1 (issue #729)
 
